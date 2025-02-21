@@ -11,7 +11,7 @@ SCREEN_HEIGHT = 800
 BACKGROUND_COLOR = (255, 255, 255)  # White
 CONDUIT_COLOR = (0, 0, 0)  # Black
 CABLE_SHEATH_COLOR = (255, 165, 0)  # Orange
-COPPER_COLOR = (184, 115, 51)  # Copper
+CONDUCTOR_COLOR = (184, 115, 51)  # Copper
 
 # Cable parameters
 CONDUIT_RADIUS = 300

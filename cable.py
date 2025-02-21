@@ -91,5 +91,5 @@ def draw_cable(screen, body, cable_type):
         color = colors[i] if isinstance(colors, list) else colors
         pygame.draw.circle(screen, color, (core_x, core_y), CORE_RADIUS)
         pygame.draw.circle(
-            screen, COPPER_COLOR, (core_x, core_y), CORE_RADIUS - 2
+            screen, CONDUCTOR_COLOR, (core_x, core_y), CORE_RADIUS - 2
         )
