@@ -8,7 +8,21 @@ from conduit import draw_conduit
 from physics import setup_physics, add_conduit_to_space
 from input_handler import InputHandler
 
+def spawn_cable():
+    spawn_x, spawn_y = random.randint(0, SCREEN_WIDTH), random.randint(0, SCREEN_HEIGHT)
+    body, shape, cable_type = create_cable((spawn_x, spawn_y), CableType.SINGLE)
+    body.velocity = (random.uniform(-50, 50), 0)
+    space.add(body, shape)
+    cables.append((body, shape, cable_type))
+
+def reset_view():
+    global cables
+    cables = []
+    space.remove(*space.bodies, *space.shapes)
+    add_conduit_to_space(space)
+
 def main():
+    global space, cables
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Multi-Core Cable Simulation")
