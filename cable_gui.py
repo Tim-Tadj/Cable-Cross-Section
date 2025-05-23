@@ -226,7 +226,7 @@ class CableGUI(QWidget):
                 ))
                 # For display in QListWidget:
                 list_item_text = f"ID: {cable_id} - Type: {cable_type_enum.name}"
-                list_widget_item = QListWidgetWidgetItem(list_item_text) # Corrected class name
+                list_widget_item = QListWidgetItem(list_item_text) # Corrected class name
                 list_widget_item.setData(Qt.UserRole, cable_id) # Store ID with item
                 self.cable_list_widget.addItem(list_widget_item)
         

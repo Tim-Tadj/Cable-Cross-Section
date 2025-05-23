@@ -12,7 +12,7 @@ import pymunk # Added for reset_view's type check
 from config import *
 from cable import create_cable, draw_cable
 from conduit import draw_conduit
-from physics import setup_physics, add_conduit_to_space
+from physics import setup_physics, rebuild_conduit_in_space # MODIFIED HERE
 from input_handler import InputHandler
 
 # --- Global Scope Variables ---
@@ -223,5 +223,5 @@ if __name__ == "__main__":
     # When used with the GUI (cable_gui.py), main() is typically called in a thread.
     main()
 
-# Ensure rebuild_conduit_in_space is imported from physics.py at the top
-from physics import rebuild_conduit_in_space
+# Ensure rebuild_conduit_in_space is imported from physics.py at the top # REMOVED LINE
+# from physics import rebuild_conduit_in_space # REMOVED LINE
