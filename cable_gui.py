@@ -181,7 +181,7 @@ class CableGUI(QWidget):
         GUI calculation updates are handled by the QTimer.
         """
         # Use the spawn logic from input_handler to be consistent with mouse clicks in Pygame window
-        spawn_pos = main.input_handler.get_spawn_position() # Use main.input_handler
+        spawn_pos = main.input_handler.get_spawn_position(main_current_conduit_radius) # MODIFIED: Pass current conduit radius
         # Use the cable type selected via keyboard (1,2,3) from input_handler
         selected_cable_type = main.input_handler.current_cable_type
         

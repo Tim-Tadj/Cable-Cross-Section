@@ -7,7 +7,7 @@ for determining cable spawn positions.
 import pygame
 import math
 import random
-from config import CableType, SCREEN_HEIGHT, CONDUIT_RADIUS, SCREEN_WIDTH
+from config import CableType, SCREEN_HEIGHT, DEFAULT_CONDUIT_RADIUS, SCREEN_WIDTH # MODIFIED IMPORT
 from cable import calculate_cable_radius # Used to determine cable size for spawn positioning
 
 class InputHandler:
@@ -43,14 +43,18 @@ class InputHandler:
                 self.current_cable_type = CableType.FOUR_CORE
                 print("Selected Cable Type: FOUR_CORE")
                 
-    def get_spawn_position(self) -> tuple[float, float]:
+    def get_spawn_position(self, current_conduit_radius: float) -> tuple[float, float]: # MODIFIED SIGNATURE
         """
-        Calculates a suitable (x, y) position for spawning a new cable.
+        Calculates a suitable (x, y) position for spawning a new cable,
+        considering the current (potentially dynamic) conduit radius.
 
         The position is determined to be near the top of the conduit, with some
         random horizontal variation to prevent cables from stacking perfectly.
-        It considers the radius of the currently selected cable type to ensure
-        it spawns within the conduit boundaries.
+        It considers the radius of the currently selected cable type and the
+        provided `current_conduit_radius` to ensure it spawns within boundaries.
+
+        Args:
+            current_conduit_radius (float): The current radius of the conduit.
 
         Returns:
             tuple[float, float]: A tuple (spawn_x, spawn_y) representing the calculated
@@ -62,7 +66,7 @@ class InputHandler:
 
         # Spawn Y position: near the top opening of the conduit.
         # Positioned such that the top of the cable is roughly 'margin_from_wall' from the conduit's inner top edge.
-        spawn_y = (SCREEN_HEIGHT / 2) - CONDUIT_RADIUS + margin_from_wall
+        spawn_y = (SCREEN_HEIGHT / 2) - current_conduit_radius + margin_from_wall # USE PASSED RADIUS
 
         # Calculate available horizontal spawn width at this y-level to keep cables within conduit
         # y_from_center: distance of spawn_y from the conduit's horizontal centerline
@@ -70,8 +74,8 @@ class InputHandler:
         
         # Using circle equation: x^2 + y^2 = r^2  => x = sqrt(r^2 - y^2)
         # available_half_width is the horizontal distance from conduit center to its edge at spawn_y
-        if CONDUIT_RADIUS**2 >= y_from_center**2:
-            available_half_width = math.sqrt(CONDUIT_RADIUS**2 - y_from_center**2)
+        if current_conduit_radius**2 >= y_from_center**2: # USE PASSED RADIUS
+            available_half_width = math.sqrt(current_conduit_radius**2 - y_from_center**2) # USE PASSED RADIUS
         else:
             available_half_width = 0 # Should not happen if spawn_y is correctly within conduit
             

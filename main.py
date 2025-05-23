@@ -192,7 +192,8 @@ def main():
             if event.type == pygame.MOUSEBUTTONDOWN:
                 # Get spawn position (typically near top, x-coordinate from mouse)
                 # and currently selected cable type from the input handler.
-                spawn_pos_tuple = input_handler.get_spawn_position()
+                # Pass the current_conduit_radius to get_spawn_position
+                spawn_pos_tuple = input_handler.get_spawn_position(current_conduit_radius) 
                 current_selected_type = input_handler.current_cable_type
                 spawn_cable(spawn_pos_tuple, current_selected_type)
                 # The GUI is not directly notified; its QTimer will pick up changes in `main.cables`.
