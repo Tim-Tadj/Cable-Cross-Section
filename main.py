@@ -20,6 +20,9 @@ from input_handler import InputHandler
 # by both the main simulation loop in this file and potentially by other modules
 # like the GUI (cable_gui.py) for control and display purposes.
 
+next_cable_id = 1
+"""Counter to assign unique IDs to spawned cables."""
+
 input_handler = InputHandler()
 """Manages user input, primarily for selecting cable types via keyboard
 and determining spawn positions for new cables."""
@@ -27,6 +30,14 @@ and determining spawn positions for new cables."""
 space = setup_physics()
 """The Pymunk physics space instance. All physics bodies (cables, conduit walls)
 and their interactions are managed within this space."""
+
+current_conduit_radius = DEFAULT_CONDUIT_RADIUS
+"""Current radius of the conduit, can be changed dynamically via GUI."""
+conduit_body = None # To store the static body of the conduit
+"""Pymunk static body for the current conduit. Used for removal when rebuilding."""
+conduit_segments = [] # To store conduit segment shapes for removal
+"""List of Pymunk segment shapes for the current conduit. Used for removal when rebuilding."""
+
 
 cables = []
 """A list storing tuples for each active cable in the simulation.
@@ -47,15 +58,42 @@ def spawn_cable(position: tuple[int, int], cable_type_to_spawn: CableType):
         cable_type_to_spawn (CableType): The type of cable to spawn (e.g., SINGLE, THREE_CORE).
     """
     # global space, cables # Not needed as they are already global
-    body, shape, cable_type_enum_instance = create_cable(
+    # Ensure next_cable_id is accessible if it's modified here (it is, so global keyword is needed)
+    global next_cable_id 
+    
+    body, shape, cable_type_obj = create_cable( # from cable.py
         position, cable_type_to_spawn
     )
+    
     # Assign a small random horizontal velocity for a slightly more dynamic entry
     body.velocity = (random.uniform(-50, 50), 0)
-    space.add(body, shape)
-    cables.append((body, shape, cable_type_enum_instance))
+    space.add(body, shape) # Add to physics space
+    
+    cables.append((next_cable_id, body, shape, cable_type_obj)) # Store ID
+    next_cable_id += 1
     # Note: GUI updates (like recalculating fill percentage) are not directly triggered here.
     # The GUI uses a QTimer to periodically check the 'cables' list and update itself.
+
+def remove_cables_by_ids(ids_to_remove: list[int]):
+    """
+    Removes cables from the simulation based on a list of their IDs.
+    It updates both the global 'cables' list and removes the corresponding
+    Pymunk bodies and shapes from the physics 'space'.
+    """
+    global cables, space
+    cables_to_keep = []
+    for cable_data in cables:
+        cable_id, body, shape, _ = cable_data
+        if cable_id in ids_to_remove:
+            # Important: Check if body and shape are currently in the space before removing
+            # This can prevent errors if an object was already removed or not fully added.
+            if body in space.bodies:
+                 space.remove(body)
+            if shape in space.shapes:
+                 space.remove(shape)
+        else:
+            cables_to_keep.append(cable_data)
+    cables = cables_to_keep
 
 def reset_view():
     """
@@ -63,21 +101,52 @@ def reset_view():
 
     It iterates through all bodies in the Pymunk space and removes those
     that are dynamic (i.e., the cables). The global 'cables' list is also cleared.
+    The global 'next_cable_id' is reset to 1.
     Static elements like conduit walls are assumed to remain.
     """
-    # global cables, space # Not needed as they are already global
+    global cables, space, next_cable_id # next_cable_id is now also reset
+    
+    # Iterate through a copy of the cables list for safe removal
+    for cable_data_tuple in list(cables):
+        _id, body, shape, _ = cable_data_tuple # Unpack assuming new structure (id, body, shape, type)
+        # Check if body and shape are in space before removal to prevent errors
+        if body in space.bodies:
+            space.remove(body)
+        if shape in space.shapes:
+            space.remove(shape)
+            
     cables.clear() # Clear the list of cable references
+    next_cable_id = 1 # Reset ID counter
 
-    # Remove all dynamic Pymunk bodies (the cables) from the space.
-    # Static bodies (like conduit walls) are preserved.
-    # Iterate over a copy of space.bodies because we are modifying it.
-    for body_to_remove in list(space.bodies):
-        if body_to_remove.body_type == pymunk.Body.DYNAMIC:
-            space.remove(body_to_remove, *body_to_remove.shapes) # Remove body and all its shapes
+    # Conduit itself is rebuilt by update_simulation_conduit_radius if its size changes.
+    # Resetting view primarily concerns cables.
 
-    # Note: If conduit segments were also dynamically added and need re-adding,
-    # a call like `add_conduit_to_space(space)` would be necessary here.
-    # However, current design assumes conduit is static and added once.
+def update_simulation_conduit_radius(new_radius: float):
+    """
+    Updates the conduit's radius in the simulation.
+    This involves removing the old conduit segments from the Pymunk space
+    and adding new ones with the specified radius.
+    """
+    global current_conduit_radius, conduit_body, conduit_segments, space
+    
+    current_conduit_radius = new_radius
+    
+    # Rebuild the conduit in Pymunk space
+    # Using constants from config.py for screen_width, screen_height, etc.
+    new_body, new_segs = rebuild_conduit_in_space(
+        space, 
+        conduit_body, 
+        conduit_segments, 
+        current_conduit_radius,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        CONDUIT_THICKNESS,
+        COLLTYPE_CONDUIT
+    )
+    conduit_body = new_body
+    conduit_segments = new_segs
+    # The GUI's QTimer will handle calling update_calculations_display,
+    # which will use the new main.current_conduit_radius.
 
 def main():
     """
@@ -88,15 +157,26 @@ def main():
     and rendering the simulation elements (conduit, cables) on the screen.
     This function is typically run in a separate thread when the GUI is active.
     """
-    # global space, cables, input_handler # Not needed as they are already global
+    global conduit_body, conduit_segments # Ensure these are treated as global for initial setup
+
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     pygame.display.set_caption("Multi-Core Cable Simulation")
     clock = pygame.time.Clock()
     
-    # Ensure the conduit is added to the (now global) Pymunk space.
-    # This is done once at the start.
-    add_conduit_to_space(space)
+    # Initial conduit setup:
+    # This replaces the old add_conduit_to_space(space) call.
+    # It populates the global conduit_body and conduit_segments.
+    conduit_body, conduit_segments = rebuild_conduit_in_space(
+        space, 
+        None,  # No old body to remove initially
+        [],    # No old segments to remove initially
+        current_conduit_radius,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        CONDUIT_THICKNESS,
+        COLLTYPE_CONDUIT
+    )
     
     running = True
     while running:
@@ -124,10 +204,12 @@ def main():
         
         # Rendering
         screen.fill(BACKGROUND_COLOR)  # Clear screen with background color
-        draw_conduit(screen)           # Draw the conduit
+        # Draw conduit using current_conduit_radius and other config constants
+        draw_conduit(screen, CONDUIT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, current_conduit_radius, CONDUIT_THICKNESS)
         
         # Draw each cable currently in the simulation
-        for body, _, cable_type_enum in cables: # Iterate through the global 'cables' list
+        # Now iterates through (id, body, shape, cable_type_enum)
+        for _, body, _, cable_type_enum in cables: # Iterate through the global 'cables' list
             draw_cable(screen, body, cable_type_enum)
         
         pygame.display.flip() # Update the full display
@@ -140,3 +222,6 @@ if __name__ == "__main__":
     # This block allows main.py to be run directly, starting the simulation.
     # When used with the GUI (cable_gui.py), main() is typically called in a thread.
     main()
+
+# Ensure rebuild_conduit_in_space is imported from physics.py at the top
+from physics import rebuild_conduit_in_space

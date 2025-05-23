@@ -1,18 +1,21 @@
 import sys
 import threading
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QColorDialog, QLabel, QSpinBox, QHBoxLayout, QGroupBox)
+                               QColorDialog, QLabel, QSpinBox, QHBoxLayout, QGroupBox,
+                               QListWidget, QAbstractItemView) 
 from PySide6.QtGui import QColor
-from PySide6.QtCore import Qt, QTimer # Add QTimer
+from PySide6.QtCore import Qt, QTimer
 import main  # Import your main.py file
-from main import input_handler # Import the instance from main.py
+from main import input_handler, update_simulation_conduit_radius, current_conduit_radius as main_current_conduit_radius
+# Qt.UserRole is used with item.data() / item.setData()
 from calculations import (
     calculate_conduit_cross_sectional_area,
     calculate_total_cable_area,
     calculate_conduit_fill_percentage,
     check_as_nzs_compliance
 )
-from config import CONDUIT_RADIUS, CORE_RADIUS, SHEATH_THICKNESS, MARGIN, CableType
+# CONDUIT_RADIUS is now main_current_conduit_radius, DEFAULT_CONDUIT_RADIUS is in config
+from config import CORE_RADIUS, SHEATH_THICKNESS, MARGIN, CableType, DEFAULT_CONDUIT_RADIUS 
 
 class CableGUI(QWidget):
     """
@@ -88,11 +91,35 @@ class CableGUI(QWidget):
         calc_layout.addWidget(self.conduit_area_label)
         calc_layout.addWidget(self.total_cable_area_label)
         calc_layout.addWidget(self.fill_percentage_label)
-        calc_layout.addWidget(self.max_fill_label) # Show max allowable fill
-        calc_layout.addWidget(self.compliance_status_label) # Show compliance status
+        calc_layout.addWidget(self.max_fill_label) 
+        calc_layout.addWidget(self.compliance_status_label)
 
+        # New additions for cable list and removal
+        active_cables_label = QLabel("Active Cables in Conduit:")
+        calc_layout.addWidget(active_cables_label)
+        self.cable_list_widget = QListWidget()
+        self.cable_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection) 
+        calc_layout.addWidget(self.cable_list_widget)
+
+        self.remove_selected_button = QPushButton("Remove Selected Cables")
+        self.remove_selected_button.clicked.connect(self.remove_selected_cables_from_gui)
+        calc_layout.addWidget(self.remove_selected_button)
+
+        # Conduit Radius Adjustment
+        conduit_size_label = QLabel("Conduit Radius (mm):")
+        calc_layout.addWidget(conduit_size_label)
+
+        self.conduit_radius_spinbox = QSpinBox()
+        self.conduit_radius_spinbox.setRange(50, 500) # Example range
+        self.conduit_radius_spinbox.setValue(int(main_current_conduit_radius)) # Use imported initial value
+        calc_layout.addWidget(self.conduit_radius_spinbox)
+
+        self.apply_conduit_size_button = QPushButton("Apply Conduit Size")
+        self.apply_conduit_size_button.clicked.connect(self.apply_new_conduit_size)
+        calc_layout.addWidget(self.apply_conduit_size_button)
+        
         calculations_group.setLayout(calc_layout)
-        layout.addWidget(calculations_group) # Add the group box to the main layout
+        layout.addWidget(calculations_group)
 
         self.setLayout(layout)
         self.update_calculations_display() # Initial update to populate calculation labels
@@ -175,28 +202,33 @@ class CableGUI(QWidget):
         Recalculates conduit fill, total cable area, and AS/NZS compliance status,
         then updates the respective QLabels in the GUI.
         This method fetches the current list of cables (`main.cables`) from the `main` module
-        and uses global configuration values (e.g., `CONDUIT_RADIUS`, `CORE_RADIUS`)
-        for performing the calculations. It's typically called by the QTimer or after
-        a reset.
+        and uses the dynamic `main.current_conduit_radius` for conduit area calculations.
+        It's typically called by the QTimer or after a reset/conduit size change.
         """
         # 1. Calculate and display conduit's total internal area
-        conduit_area = calculate_conduit_cross_sectional_area(CONDUIT_RADIUS)
+        # Use the dynamically updated conduit radius from main.py
+        conduit_area = calculate_conduit_cross_sectional_area(main_current_conduit_radius) 
         self.conduit_area_label.setText(f"Conduit Area: {conduit_area:.2f} mm²")
 
         # 2. Prepare cable data for calculations.
-        #    The `main.cables` list stores tuples of (Pymunk body, Pymunk shape, CableType enum).
+        #    The `main.cables` list now stores tuples of (id, Pymunk body, Pymunk shape, CableType enum).
         #    For calculation, we need a list of tuples: (CableType, core_radius, sheath_thickness, margin).
-        #    Currently, core_radius, sheath_thickness, and margin are global constants from `config.py`.
         current_cables_data = []
         if hasattr(main, 'cables'): # Check if main.cables exists and is accessible
-            for _, _, cable_type_enum in main.cables: # Iterate through the list of active cables
-                # Ensure cable_type_enum is the CableType Enum instance, as expected by calculation functions.
+            self.cable_list_widget.clear() # Clear list before repopulating
+            for cable_id, _body, _shape, cable_type_enum in main.cables: # Iterate through the list of active cables
+                # For calculation data (unchanged part from previous version, but uses new main.cables structure)
                 current_cables_data.append((
                     cable_type_enum,
                     CORE_RADIUS,      # Global core radius from config
                     SHEATH_THICKNESS, # Global sheath thickness from config
                     MARGIN            # Global margin from config
                 ))
+                # For display in QListWidget:
+                list_item_text = f"ID: {cable_id} - Type: {cable_type_enum.name}"
+                list_widget_item = QListWidgetWidgetItem(list_item_text) # Corrected class name
+                list_widget_item.setData(Qt.UserRole, cable_id) # Store ID with item
+                self.cable_list_widget.addItem(list_widget_item)
         
         # 3. Calculate and display total cross-sectional area of all cables
         total_cable_area = calculate_total_cable_area(current_cables_data)
@@ -229,8 +261,41 @@ class CableGUI(QWidget):
         pygame_thread.daemon = True # Ensures thread exits when main application exits
         pygame_thread.start()
 
+    def remove_selected_cables_from_gui(self):
+        """
+        Removes the cables selected in the QListWidget from the simulation.
+        It gets the IDs of the selected cables, calls main.remove_cables_by_ids,
+        and relies on the QTimer to update the GUI list and calculations.
+        """
+        selected_items = self.cable_list_widget.selectedItems()
+        if not selected_items:
+            return # No items selected, do nothing
+
+        ids_to_remove = []
+        for item in selected_items:
+            ids_to_remove.append(item.data(Qt.UserRole)) # Retrieve the stored cable ID
+
+        if ids_to_remove:
+            main.remove_cables_by_ids(ids_to_remove)
+            # The QTimer (self.calc_update_timer) will periodically call
+            # self.update_calculations_display(), which will refresh the
+            # QListWidget and all calculation labels. No direct call needed here.
+            
+    def apply_new_conduit_size(self):
+        """
+        Applies the new conduit radius from the QSpinBox to the simulation.
+        Calls main.update_simulation_conduit_radius to trigger the change in the physics space.
+        The QTimer will handle updating the calculations display.
+        """
+        new_radius = float(self.conduit_radius_spinbox.value())
+        update_simulation_conduit_radius(new_radius)
+        # QTimer will call update_calculations_display, which now uses 
+        # main.current_conduit_radius for its conduit area calculation.
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    # Need to ensure QListWidgetItem is available if not using FQCN
+    from PySide6.QtWidgets import QListWidgetItem 
     gui = CableGUI()
     gui.show()
     sys.exit(app.exec())

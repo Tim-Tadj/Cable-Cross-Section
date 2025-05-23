@@ -19,7 +19,7 @@ CABLE_SHEATH_COLOR = (255, 165, 0)  # Orange, for the outer sheath of cables
 CONDUCTOR_COLOR = (184, 115, 51)    # Copper/Brown, for the conductor part of cable cores
 
 # --- Cable and Conduit Physical Parameters (all units are abstract, e.g., pixels or mm) ---
-CONDUIT_RADIUS = 300        # Internal radius of the conduit
+DEFAULT_CONDUIT_RADIUS = 300 # Renamed from CONDUIT_RADIUS # Internal radius of the conduit
 CONDUIT_THICKNESS = 5       # Visual thickness of the conduit wall when drawn
 CORE_RADIUS = 30            # Radius of a single electrical core within a cable
 SHEATH_THICKNESS = 3        # Thickness of the protective outer sheath of a cable
