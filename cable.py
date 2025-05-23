@@ -1,95 +1,201 @@
 # cable.py
+"""
+Handles the creation, physics properties, drawing, and collision of cables.
+Cables can be single-core, three-core, or four-core, each with specific
+geometric arrangements for their cores.
+"""
 import math
-from config import *
-import pymunk
+from config import * # Imports global configurations like CORE_RADIUS, SHEATH_THICKNESS, colors, etc.
+import pymunk # For physics object creation (Body, Circle)
 
-def cable_collision_handler(arbiter, space, data):
+def cable_collision_handler(arbiter: pymunk.Arbiter, space: pymunk.Space, data: dict) -> bool:
+    """
+    A simple collision handler for cable-to-cable interactions.
+    This is a basic placeholder and applies a small repulsive impulse.
+    For more realistic behavior, this would need significant refinement
+    based on material properties and desired interaction effects.
+
+    Args:
+        arbiter (pymunk.Arbiter): Contains information about the collision pair.
+        space (pymunk.Space): The physics space where the collision occurred.
+        data (dict): User-defined data passed to the handler (not used here).
+
+    Returns:
+        bool: True to continue processing the collision normally.
+    """
     cable_a, cable_b = arbiter.shapes
-    normal = arbiter.normal
-    points = arbiter.contact_point_set.points
+    normal = arbiter.normal # Normal vector of the collision
+    points = arbiter.contact_point_set.points # Contact points
 
+    # Apply a small, somewhat arbitrary impulse to simulate a soft repulsion.
+    # This is a very simplistic model of cable interaction.
     for point in points:
-        impulse = 5.0
+        impulse_magnitude = 5.0 # Arbitrary impulse strength
+        # Apply impulse to body_a at the contact point relative to body_a's center
         cable_a.body.apply_impulse_at_world_point(
-            normal * impulse, point.point_a
+            normal * impulse_magnitude, point.point_a
         )
+        # Apply opposite impulse to body_b
         cable_b.body.apply_impulse_at_world_point(
-            -normal * impulse, point.point_b
+            -normal * impulse_magnitude, point.point_b
         )
+    return True # Standard collision processing should continue
 
-    return True
+def calculate_cable_radius(cable_type: CableType) -> float:
+    """
+    Calculates the effective bounding radius of a cable, including cores, sheath, and margin.
+    This radius is used for the Pymunk physics shape and for visual representation.
 
-def calculate_cable_radius(cable_type):
+    - Single-core: Radius of the core + sheath thickness + margin.
+    - Three-core (Trefoil): Cores are arranged in a triangle. The calculation determines
+      the distance from the cable center to the center of each core, then adds the
+      core radius, sheath thickness, and margin to find the bounding circle.
+      The term (2 * CORE_RADIUS) / math.sqrt(3) is the distance from the geometric center
+      to the center of each of the three equally spaced cores.
+    - Four-core (Quad): Cores are arranged, typically in a square or cloverleaf.
+      The term math.sqrt(2) * CORE_RADIUS is the distance from the geometric center
+      to the center of each of the four cores if arranged in a square.
+
+    Args:
+        cable_type (CableType): The type of cable (SINGLE, THREE_CORE, FOUR_CORE).
+
+    Returns:
+        float: The calculated effective radius of the cable.
+    """
     if cable_type == CableType.SINGLE:
         return CORE_RADIUS + SHEATH_THICKNESS + MARGIN
     elif cable_type == CableType.THREE_CORE:
+        # Distance from cable center to the center of each of the three cores
         core_center_distance = (2 * CORE_RADIUS) / math.sqrt(3)
         return core_center_distance + CORE_RADIUS + MARGIN + SHEATH_THICKNESS
     else:  # FOUR_CORE
+        # Distance from cable center to the center of each of the four cores (assuming square formation)
         core_center_distance = math.sqrt(2) * CORE_RADIUS
         return core_center_distance + CORE_RADIUS + MARGIN + SHEATH_THICKNESS
 
-def get_core_positions(cable_type, cable_radius):
+def get_core_positions(cable_type: CableType, cable_radius: float) -> list[tuple[float, float]]:
+    """
+    Calculates the relative (x, y) positions of the centers of the cores within a cable,
+    based on the cable type. These positions are relative to the cable's body center.
+
+    - Single-core: One core at the center (0,0).
+    - Three-core (Trefoil): Three cores arranged symmetrically around the center.
+      The `core_center_distance` is the same as in `calculate_cable_radius`.
+      Cores are placed at 0, 120 (2pi/3), and 240 (4pi/3) degrees.
+    - Four-core (Quad): Four cores, typically assumed to be in a square or diamond formation.
+      Here, they are placed along the axes at `core_center_distance`.
+      (Note: This might be simplified; a true quad often has a central filler or slight offsets).
+
+    Args:
+        cable_type (CableType): The type of cable.
+        cable_radius (float): The overall radius of the cable (not directly used in current logic
+                              but could be relevant for more complex core positioning).
+
+    Returns:
+        list[tuple[float, float]]: A list of (x, y) tuples for each core's center,
+                                   relative to the cable's center.
+    """
     if cable_type == CableType.SINGLE:
-        return [(0, 0)]
+        return [(0, 0)] # Single core at the center
     elif cable_type == CableType.THREE_CORE:
-        core_center_distance = (2 * CORE_RADIUS) / math.sqrt(3)
-        angles = [0, 2 * math.pi / 3, 4 * math.pi / 3]
+        core_center_distance = (2 * CORE_RADIUS) / math.sqrt(3) # Distance from cable center to core center
+        angles = [0, 2 * math.pi / 3, 4 * math.pi / 3] # Angles for three cores (0, 120, 240 degrees)
         return [
             (math.cos(angle) * core_center_distance, math.sin(angle) * core_center_distance)
             for angle in angles
         ]
     else:  # FOUR_CORE
-        core_center_distance = math.sqrt(2) * CORE_RADIUS
+        # Simplified square/diamond formation for four cores
+        core_center_distance = math.sqrt(2) * CORE_RADIUS # Distance from cable center to core center
+        # Positions: (0, -d), (d, 0), (0, d), (-d, 0)
+        # This forms a diamond shape if axes are standard.
         return [
-            (0, -core_center_distance),
-            (core_center_distance, 0),
-            (0, core_center_distance),
-            (-core_center_distance, 0),
+            (0, -core_center_distance), # Top (or bottom depending on y-axis direction)
+            (core_center_distance, 0),  # Right
+            (0, core_center_distance),  # Bottom (or top)
+            (-core_center_distance, 0), # Left
         ]
 
-def create_cable(position, cable_type):
-    mass = 1
-    moment = pymunk.moment_for_circle(mass, 0, calculate_cable_radius(cable_type))
-    body = pymunk.Body(mass, moment)
-    body.position = position
+def create_cable(position: tuple[float, float], cable_type: CableType) -> tuple[pymunk.Body, pymunk.Circle, CableType]:
+    """
+    Creates a Pymunk physics body and shape for a cable.
 
-    shape = pymunk.Circle(body, calculate_cable_radius(cable_type))
-    shape.friction = 0.5
-    shape.elasticity = 0.4
-    shape.collision_type = COLLTYPE_CABLE
-    shape.filter = pymunk.ShapeFilter(categories=0b1)
+    Args:
+        position (tuple[float, float]): The initial (x, y) world coordinates for the cable's center.
+        cable_type (CableType): The type of cable to create.
 
-    return body, shape, cable_type
+    Returns:
+        tuple[pymunk.Body, pymunk.Circle, CableType]: A tuple containing the Pymunk Body,
+                                                     Pymunk Circle shape, and the cable_type.
+    """
+    mass = 1 # Arbitrary mass for the cable
+    effective_radius = calculate_cable_radius(cable_type)
+    # Calculate moment of inertia for a solid circle
+    moment = pymunk.moment_for_circle(mass, 0, effective_radius)
+    body = pymunk.Body(mass, moment) # Create the rigid body
+    body.position = position # Set its initial position
 
-def draw_cable(screen, body, cable_type):
-    pos = body.position
-    angle = body.angle
-    cable_radius = calculate_cable_radius(cable_type)
+    # Create the circular physics shape for the cable
+    shape = pymunk.Circle(body, effective_radius)
+    shape.friction = 0.5      # Standard friction
+    shape.elasticity = 0.4    # Some bounciness
+    shape.collision_type = COLLTYPE_CABLE # Assign custom collision type for specific handling
+    shape.filter = pymunk.ShapeFilter(categories=0b1) # Belongs to category 1 (e.g., for collision filtering)
 
+    return body, shape, cable_type # Return the body, shape, and its type
+
+def draw_cable(screen: pygame.Surface, body: pymunk.Body, cable_type: CableType):
+    """
+    Draws a cable, including its sheath and individual cores, on the Pygame screen.
+
+    The cores are drawn rotated according to the cable body's current angle.
+
+    Args:
+        screen (pygame.Surface): The Pygame surface to draw on.
+        body (pymunk.Body): The Pymunk body of the cable, providing position and angle.
+        cable_type (CableType): The type of cable, determining core arrangement and colors.
+    """
+    pos = body.position # Center position of the cable body
+    angle = body.angle  # Current rotation angle of the cable body
+    effective_cable_radius = calculate_cable_radius(cable_type) # Overall radius for drawing
+
+    # 1. Draw the outer sheath of the cable
     pygame.draw.circle(
-        screen, CABLE_SHEATH_COLOR, (int(pos.x), int(pos.y)), cable_radius
+        screen, CABLE_SHEATH_COLOR, (int(pos.x), int(pos.y)), effective_cable_radius
     )
 
+    # 2. Draw an inner circle representing the area just inside the sheath (optional visual detail)
+    # This color (230, 140, 0) is a dark yellow/orange, perhaps representing insulation layer.
     pygame.draw.circle(
         screen,
-        (230, 140, 0),
+        (230, 140, 0), # Example: Inner insulation color
         (int(pos.x), int(pos.y)),
-        cable_radius - SHEATH_THICKNESS,
+        effective_cable_radius - SHEATH_THICKNESS, # Radius is sheath boundary minus sheath thickness
     )
 
-    core_positions = get_core_positions(cable_type, cable_radius)
-    colors = CORE_COLORS[cable_type.value]
+    # 3. Get relative positions of cores and their colors
+    core_relative_positions = get_core_positions(cable_type, effective_cable_radius)
+    # Fetch core colors based on cable type (e.g., "single", "three_core")
+    core_color_set = CORE_COLORS[cable_type.value] # .value gives the string key for the dict
 
-    for i, (offset_x, offset_y) in enumerate(core_positions):
+    # 4. Draw each core
+    for i, (offset_x, offset_y) in enumerate(core_relative_positions):
+        # Rotate the core's relative offset by the cable body's angle
         rotated_x = offset_x * math.cos(angle) - offset_y * math.sin(angle)
         rotated_y = offset_x * math.sin(angle) + offset_y * math.cos(angle)
 
-        core_x = int(pos.x + rotated_x)
-        core_y = int(pos.y + rotated_y)
+        # Calculate the absolute world position of the core's center
+        core_x_world = int(pos.x + rotated_x)
+        core_y_world = int(pos.y + rotated_y)
 
-        color = colors[i] if isinstance(colors, list) else colors
-        pygame.draw.circle(screen, color, (core_x, core_y), CORE_RADIUS)
+        # Determine the color for the current core
+        # CORE_COLORS can provide a single color (for single-core) or a list (for multi-core)
+        current_core_color = core_color_set[i] if isinstance(core_color_set, list) else core_color_set
+        
+        # Draw the core insulation
+        pygame.draw.circle(screen, current_core_color, (core_x_world, core_y_world), CORE_RADIUS)
+        
+        # Draw the conductor part of the core (slightly smaller, metallic color)
         pygame.draw.circle(
-            screen, CONDUCTOR_COLOR, (core_x, core_y), CORE_RADIUS - 2
+            screen, CONDUCTOR_COLOR, (core_x_world, core_y_world), CORE_RADIUS - 2 # -2 makes it appear as an inner circle
         )
