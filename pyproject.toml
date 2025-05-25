@@ -1,0 +1,11 @@
+[project]
+name = "cable-cross-section"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pygame>=2.6.1",
+    "pymunk>=6.11.1",
+    "pyside6>=6.9.0",
+]
