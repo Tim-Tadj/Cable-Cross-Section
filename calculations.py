@@ -29,84 +29,40 @@ def calculate_conduit_cross_sectional_area(conduit_radius: float) -> float:
     """
     return math.pi * (conduit_radius ** 2)
 
-def _get_effective_cable_radius(cable_type: CableType, core_radius: float, sheath_thickness: float, margin: float) -> float:
+def calculate_single_cable_area(outer_diameter: float) -> float:
     """
-    Calculates the effective radius of a cable, including its cores, sheath, and an additional margin.
-    This effective radius represents the overall space the cable is considered to occupy within the conduit.
-    The calculation logic is derived from how cable dimensions are determined in `cable.py` 
-    (specifically, the `calculate_cable_radius` function there, which determines the bounding circle).
+    Calculates the cross-sectional area of a single cable based on its outer diameter.
 
     Args:
-        cable_type (CableType): The type of the cable (e.g., SINGLE, THREE_CORE).
-        core_radius (float): The radius of a single core within the cable.
-        sheath_thickness (float): The thickness of the cable's outer sheath.
-        margin (float): An additional margin around the cable for spacing or clearance.
+        outer_diameter (float): The outer diameter of the cable.
 
     Returns:
-        float: The effective radius of the cable.
-
-    Raises:
-        ValueError: If an unknown cable_type is provided.
+        float: The cross-sectional area of the cable.
     """
-    if cable_type == CableType.SINGLE:
-        # For a single core cable, radius is core + sheath + margin.
-        return core_radius + sheath_thickness + margin
-    elif cable_type == CableType.THREE_CORE:
-        # For three cores arranged in a trefoil (triangular) formation,
-        # the distance from the cable's geometric center to the center of each core is calculated.
-        # This calculation is based on the geometry of an equilateral triangle formed by the core centers.
-        # The term (2 * core_radius) / math.sqrt(3) is equivalent to core_radius / (math.sqrt(3)/2),
-        # which is core_radius / sin(60deg), representing the circumradius of the triangle of cores if they were points.
-        # Or, more accurately, it's the distance from the center to one core's center.
-        core_center_distance = (2 * core_radius) / math.sqrt(3) # Distance from cable center to each core's center
-        return core_center_distance + core_radius + sheath_thickness + margin
-    elif cable_type == CableType.FOUR_CORE:
-        # For four cores, typically arranged in a square or quad formation,
-        # the distance from the cable's geometric center to the center of each core is calculated.
-        # This assumes cores are at the corners of a square centered at the origin.
-        # The distance to each core center is core_radius * sqrt(2).
-        core_center_distance = math.sqrt(2) * core_radius # Distance from cable center to each core's center
-        return core_center_distance + core_radius + sheath_thickness + margin
-    else:
-        raise ValueError(f"Unknown cable type: {cable_type}")
+    radius = outer_diameter / 2
+    return math.pi * (radius ** 2)
 
-def calculate_cable_cross_sectional_area(cable_type: CableType, core_radius: float, sheath_thickness: float, margin: float) -> float:
+def calculate_total_cable_area(cables_data: list[tuple[CableType, float]]) -> float:
     """
-    Calculates the effective cross-sectional area of a single cable, based on its type,
-    dimensions, and the defined margin. This area represents the space the cable
-    is considered to occupy within the conduit.
+    Calculates the total cross-sectional area of all cables intended for a conduit,
+    based on their outer diameters.
 
     Args:
-        cable_type (CableType): The type of the cable.
-        core_radius (float): The radius of a single core.
-        sheath_thickness (float): The thickness of the cable's outer sheath.
-        margin (float): An additional margin for spacing.
-
-    Returns:
-        float: The effective cross-sectional area of the cable.
-    """
-    effective_radius = _get_effective_cable_radius(cable_type, core_radius, sheath_thickness, margin)
-    return math.pi * (effective_radius ** 2)
-
-def calculate_total_cable_area(cables_data: list[tuple[CableType, float, float, float]]) -> float:
-    """
-    Calculates the total effective cross-sectional area of all cables intended for a conduit.
-
-    Args:
-        cables_data (list[tuple[CableType, float, float, float]]): A list where each tuple
+        cables_data (list[tuple[CableType, float]]): A list where each tuple
             contains the data for a single cable:
-            - cable_type (CableType): The type of the cable.
-            - core_radius (float): The radius of a single core for that cable.
-            - sheath_thickness (float): The sheath thickness for that cable.
-            - margin (float): The margin for that cable.
-            Example: [(CableType.SINGLE, 1.0, 0.5, 0.1), (CableType.THREE_CORE, 1.0, 0.5, 0.1)]
+            - cable_type (CableType): The type of the cable (currently unused in this calculation
+                                      as area is solely based on outer_diameter, but retained for
+                                      consistency with data structure from GUI).
+            - outer_diameter (float): The outer diameter of the cable.
+            Example: [(CableType.SINGLE, 60.0), (CableType.THREE_CORE, 75.0)]
 
     Returns:
-        float: The sum of the effective cross-sectional areas of all provided cables.
+        float: The sum of the cross-sectional areas of all provided cables.
     """
     total_area = 0.0
-    for cable_type, cr, st, m in cables_data:
-        total_area += calculate_cable_cross_sectional_area(cable_type, cr, st, m)
+    # CableType is unpacked but not used, as area is determined by outer_diameter
+    for _cable_type, outer_diameter in cables_data:
+        total_area += calculate_single_cable_area(outer_diameter)
     return total_area
 
 def calculate_conduit_fill_percentage(total_cable_area: float, conduit_area: float) -> float:
@@ -177,29 +133,23 @@ if __name__ == '__main__':
     # Assuming a conduit and some cables
     example_conduit_radius = 50  # Example conduit radius in mm
     
-    # Using global parameters from config.py for consistency in tests
-    default_core_radius = CORE_RADIUS
-    default_sheath_thickness = SHEATH_THICKNESS
-    default_margin = MARGIN
-
     conduit_area = calculate_conduit_cross_sectional_area(example_conduit_radius)
     print(f"Conduit Internal Radius: {example_conduit_radius} mm")
     print(f"Conduit Internal Area: {conduit_area:.2f} mm^2")
 
-    # Define some example cables using the structure expected by calculate_total_cable_area
-    # Each tuple: (CableType, core_radius, sheath_thickness, margin)
+    # Define some example cables using the new structure expected by calculate_total_cable_area
+    # Each tuple: (CableType, outer_diameter)
     example_cables_data = [
-        (CableType.SINGLE, default_core_radius, default_sheath_thickness, default_margin),
-        (CableType.THREE_CORE, default_core_radius, default_sheath_thickness, default_margin),
-        (CableType.FOUR_CORE, default_core_radius, default_sheath_thickness, default_margin)
+        (CableType.SINGLE, 20.0),      # Example 20mm OD single core
+        (CableType.THREE_CORE, 35.0),  # Example 35mm OD three core
+        (CableType.FOUR_CORE, 40.0)    # Example 40mm OD four core
     ]
 
-    print(f"\nUsing Default Cable Parameters: Core Radius={default_core_radius}, Sheath={default_sheath_thickness}, Margin={default_margin}")
+    print(f"\nUsing Example Cable Outer Diameters:")
 
-    for c_type, cr_val, st_val, m_val in example_cables_data:
-        area = calculate_cable_cross_sectional_area(c_type, cr_val, st_val, m_val)
-        eff_radius = _get_effective_cable_radius(c_type, cr_val, st_val, m_val)
-        print(f"  - {c_type.name} cable: Effective Radius = {eff_radius:.2f} mm, Area = {area:.2f} mm^2")
+    for c_type, od_val in example_cables_data:
+        area = calculate_single_cable_area(od_val)
+        print(f"  - {c_type.name} cable: Outer Diameter = {od_val:.2f} mm, Area = {area:.2f} mm^2")
 
     total_calculated_cable_area = calculate_total_cable_area(example_cables_data)
     print(f"Total Area for {len(example_cables_data)} Example Cables: {total_calculated_cable_area:.2f} mm^2")

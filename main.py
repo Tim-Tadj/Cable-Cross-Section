@@ -27,6 +27,12 @@ input_handler = InputHandler()
 """Manages user input, primarily for selecting cable types via keyboard
 and determining spawn positions for new cables."""
 
+# --- Global Variables for Fallback Spawning from Pygame window ---
+# These are updated by spawn_cable (called by GUI) and used by MOUSEBUTTONDOWN event
+last_used_outer_diameter = 60.0  # Default or last used outer diameter
+last_used_cable_type = CableType.SINGLE # Default or last used cable type
+# ---
+
 space = setup_physics()
 """The Pymunk physics space instance. All physics bodies (cables, conduit walls)
 and their interactions are managed within this space."""
@@ -41,38 +47,42 @@ conduit_segments = [] # To store conduit segment shapes for removal
 
 cables = []
 """A list storing tuples for each active cable in the simulation.
-Each tuple typically contains: (Pymunk body, Pymunk shape, CableType enum).
+Each tuple now contains: (id, Pymunk body, Pymunk shape, CableType enum, outer_diameter).
 This list is used for rendering cables and for calculations in the GUI."""
 # ---
 
-def spawn_cable(position: tuple[int, int], cable_type_to_spawn: CableType):
+def spawn_cable(position: tuple[int, int], cable_type_to_spawn: CableType, outer_diameter: float):
     """
-    Spawns a new cable in the simulation at the given position and with the specified type.
+    Spawns a new cable in the simulation at the given position, type, and outer diameter.
 
-    A Pymunk body and shape are created for the cable, assigned a random horizontal velocity,
+    A Pymunk body and shape are created, assigned a random horizontal velocity,
     and then added to the physics space and the global 'cables' list.
+    Updates global 'last_used_outer_diameter' and 'last_used_cable_type'.
 
     Args:
         position (tuple[int, int]): The (x, y) coordinates where the cable should be spawned.
-                                    Typically near the top of the conduit.
-        cable_type_to_spawn (CableType): The type of cable to spawn (e.g., SINGLE, THREE_CORE).
+        cable_type_to_spawn (CableType): The type of cable to spawn.
+        outer_diameter (float): The outer diameter of the cable.
     """
-    # global space, cables # Not needed as they are already global
-    # Ensure next_cable_id is accessible if it's modified here (it is, so global keyword is needed)
-    global next_cable_id 
+    global next_cable_id, last_used_outer_diameter, last_used_cable_type
     
-    body, shape, cable_type_obj = create_cable( # from cable.py
-        position, cable_type_to_spawn
+    # create_cable now returns (body, shape, cable_type_obj, returned_outer_diameter)
+    # We use the outer_diameter passed into spawn_cable for consistency, though returned_outer_diameter should be the same.
+    body, shape, cable_type_obj, _returned_outer_diameter = create_cable(
+        position, cable_type_to_spawn, outer_diameter
     )
     
-    # Assign a small random horizontal velocity for a slightly more dynamic entry
+    # Assign a small random horizontal velocity
     body.velocity = (random.uniform(-50, 50), 0)
-    space.add(body, shape) # Add to physics space
+    space.add(body, shape)
     
-    cables.append((next_cable_id, body, shape, cable_type_obj)) # Store ID
+    cables.append((next_cable_id, body, shape, cable_type_obj, outer_diameter)) # Store with ID and outer_diameter
     next_cable_id += 1
-    # Note: GUI updates (like recalculating fill percentage) are not directly triggered here.
-    # The GUI uses a QTimer to periodically check the 'cables' list and update itself.
+    
+    # Update last used values for potential fallback spawning from Pygame window
+    last_used_outer_diameter = outer_diameter
+    last_used_cable_type = cable_type_to_spawn
+    # GUI updates via QTimer
 
 def remove_cables_by_ids(ids_to_remove: list[int]):
     """
@@ -83,7 +93,9 @@ def remove_cables_by_ids(ids_to_remove: list[int]):
     global cables, space
     cables_to_keep = []
     for cable_data in cables:
-        cable_id, body, shape, _ = cable_data
+        # Unpack, expecting 5 elements now: (id, body, shape, type, diameter)
+        # The last element (diameter) is not used here, but unpacking needs to match.
+        cable_id, body, shape, _cable_type, _outer_diameter = cable_data 
         if cable_id in ids_to_remove:
             # Important: Check if body and shape are currently in the space before removing
             # This can prevent errors if an object was already removed or not fully added.
@@ -108,7 +120,9 @@ def reset_view():
     
     # Iterate through a copy of the cables list for safe removal
     for cable_data_tuple in list(cables):
-        _id, body, shape, _ = cable_data_tuple # Unpack assuming new structure (id, body, shape, type)
+        # Unpack, expecting 5 elements: (id, body, shape, type, diameter)
+        # Only body and shape are needed here.
+        _id, body, shape, _cable_type, _outer_diameter = cable_data_tuple 
         # Check if body and shape are in space before removal to prevent errors
         if body in space.bodies:
             space.remove(body)
@@ -190,13 +204,15 @@ def main():
             
             # Handle cable spawning on mouse click in the Pygame window
             if event.type == pygame.MOUSEBUTTONDOWN:
-                # Get spawn position (typically near top, x-coordinate from mouse)
-                # and currently selected cable type from the input handler.
-                # Pass the current_conduit_radius to get_spawn_position
-                spawn_pos_tuple = input_handler.get_spawn_position(current_conduit_radius) 
-                current_selected_type = input_handler.current_cable_type
-                spawn_cable(spawn_pos_tuple, current_selected_type)
-                # The GUI is not directly notified; its QTimer will pick up changes in `main.cables`.
+                # Get spawn position using the input handler.
+                # For MOUSEBUTTONDOWN in Pygame window, use last_used_outer_diameter and last_used_cable_type.
+                # The input_handler's current_cable_type (set by K_1, K_2, K_3) is ignored here
+                # in favor of last_used_cable_type set by the GUI or previous spawns.
+                spawn_pos_tuple = input_handler.get_spawn_position(current_conduit_radius, last_used_outer_diameter)
+                
+                # Spawn using the last used type and diameter.
+                spawn_cable(spawn_pos_tuple, last_used_cable_type, last_used_outer_diameter)
+                # GUI updates via QTimer
         
         # Physics simulation step
         # Step the Pymunk space multiple times per frame for stability
@@ -209,9 +225,10 @@ def main():
         draw_conduit(screen, CONDUIT_COLOR, SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2, current_conduit_radius, CONDUIT_THICKNESS)
         
         # Draw each cable currently in the simulation
-        # Now iterates through (id, body, shape, cable_type_enum)
-        for _, body, _, cable_type_enum in cables: # Iterate through the global 'cables' list
-            draw_cable(screen, body, cable_type_enum)
+        # Cables list now stores: (id, body, shape, cable_type_enum, outer_diameter)
+        # Unpack shape as _ as it's not directly used by draw_cable.
+        for _id, body, _shape, cable_type_enum, outer_diameter_val in cables: # Iterate through the global 'cables' list
+            draw_cable(screen, body, cable_type_enum, outer_diameter_val) # Pass outer_diameter_val
         
         pygame.display.flip() # Update the full display
         clock.tick(60) # Maintain 60 frames per second

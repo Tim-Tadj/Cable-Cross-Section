@@ -2,7 +2,7 @@ import sys
 import threading
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
                                QColorDialog, QLabel, QSpinBox, QHBoxLayout, QGroupBox,
-                               QListWidget, QAbstractItemView) 
+                               QListWidget, QAbstractItemView, QComboBox, QDoubleSpinBox) 
 from PySide6.QtGui import QColor
 from PySide6.QtCore import Qt, QTimer
 import main  # Import your main.py file
@@ -67,6 +67,23 @@ class CableGUI(QWidget):
         layout.addWidget(self.core_color_button)
         layout.addWidget(self.sheath_color_button)
         layout.addWidget(self.background_color_button)
+
+        # Cable Type Selection
+        self.cable_type_label = QLabel("Cable Type:")
+        layout.addWidget(self.cable_type_label)
+        self.cable_type_combo = QComboBox()
+        for cable_type in CableType:
+            self.cable_type_combo.addItem(cable_type.name.replace("_", " ").title(), cable_type)
+        layout.addWidget(self.cable_type_combo)
+
+        # Outer Diameter Input
+        self.outer_diameter_label = QLabel("Outer Diameter (mm):")
+        layout.addWidget(self.outer_diameter_label)
+        self.outer_diameter_spinbox = QDoubleSpinBox()
+        self.outer_diameter_spinbox.setRange(10.0, 100.0)
+        self.outer_diameter_spinbox.setValue(60.0) # Default: CORE_RADIUS * 2 for a single core
+        self.outer_diameter_spinbox.setSingleStep(1.0)
+        layout.addWidget(self.outer_diameter_spinbox)
 
         # Spawn Cable Button
         self.spawn_button = QPushButton("Spawn Cable")
@@ -182,10 +199,12 @@ class CableGUI(QWidget):
         """
         # Use the spawn logic from input_handler to be consistent with mouse clicks in Pygame window
         spawn_pos = main.input_handler.get_spawn_position(main_current_conduit_radius) # MODIFIED: Pass current conduit radius
-        # Use the cable type selected via keyboard (1,2,3) from input_handler
-        selected_cable_type = main.input_handler.current_cable_type
+        # Get cable type from the QComboBox
+        selected_cable_type = self.cable_type_combo.currentData()
+        # Get outer diameter from the QDoubleSpinBox
+        outer_diameter_value = self.outer_diameter_spinbox.value()
         
-        main.spawn_cable(spawn_pos, selected_cable_type) # Call the refactored main.spawn_cable
+        main.spawn_cable(spawn_pos, selected_cable_type, outer_diameter_value) # Call the refactored main.spawn_cable
         # self.update_calculations_display() # This is now handled by the QTimer
 
     def reset_view(self):
@@ -211,27 +230,26 @@ class CableGUI(QWidget):
         self.conduit_area_label.setText(f"Conduit Area: {conduit_area:.2f} mm²")
 
         # 2. Prepare cable data for calculations.
-        #    The `main.cables` list now stores tuples of (id, Pymunk body, Pymunk shape, CableType enum).
-        #    For calculation, we need a list of tuples: (CableType, core_radius, sheath_thickness, margin).
-        current_cables_data = []
+        #    The `main.cables` list now stores tuples of (id, Pymunk body, Pymunk shape, CableType enum, outer_diameter).
+        #    For calculation, we need a list of tuples: (CableType, outer_diameter).
+        current_cables_data_for_calc = [] # Renamed to avoid confusion
         if hasattr(main, 'cables'): # Check if main.cables exists and is accessible
             self.cable_list_widget.clear() # Clear list before repopulating
-            for cable_id, _body, _shape, cable_type_enum in main.cables: # Iterate through the list of active cables
-                # For calculation data (unchanged part from previous version, but uses new main.cables structure)
-                current_cables_data.append((
-                    cable_type_enum,
-                    CORE_RADIUS,      # Global core radius from config
-                    SHEATH_THICKNESS, # Global sheath thickness from config
-                    MARGIN            # Global margin from config
-                ))
+            # Cable item in main.cables is now (id, body, shape, cable_type, outer_diameter)
+            for cable_id, _body, _shape, cable_type_enum, outer_diameter in main.cables: 
+                # For calculation data:
+                current_cables_data_for_calc.append((cable_type_enum, outer_diameter))
+                
                 # For display in QListWidget:
-                list_item_text = f"ID: {cable_id} - Type: {cable_type_enum.name}"
-                list_widget_item = QListWidgetItem(list_item_text) # Corrected class name
+                list_item_text = f"ID: {cable_id} - Type: {cable_type_enum.name} - OD: {outer_diameter:.1f}mm"
+                list_widget_item = QListWidgetItem(list_item_text) 
                 list_widget_item.setData(Qt.UserRole, cable_id) # Store ID with item
                 self.cable_list_widget.addItem(list_widget_item)
         
         # 3. Calculate and display total cross-sectional area of all cables
-        total_cable_area = calculate_total_cable_area(current_cables_data)
+        # The calculate_total_cable_area function will need to be updated to accept this new data format.
+        # For now, we assume it's updated or this will cause an error.
+        total_cable_area = calculate_total_cable_area(current_cables_data_for_calc)
         self.total_cable_area_label.setText(f"Total Cable Area: {total_cable_area:.2f} mm²")
 
         # 4. Calculate and display conduit fill percentage
@@ -239,7 +257,7 @@ class CableGUI(QWidget):
         self.fill_percentage_label.setText(f"Fill Percentage: {fill_percentage:.2f}%")
 
         # 5. Check AS/NZS compliance and display status
-        num_cables = len(current_cables_data)
+        num_cables = len(current_cables_data_for_calc) # Use the new list for count
         is_compliant, max_allowable_fill = check_as_nzs_compliance(fill_percentage, num_cables)
         
         self.max_fill_label.setText(f"Max Allowable Fill: {max_allowable_fill:.1f}% (AS/NZS)")

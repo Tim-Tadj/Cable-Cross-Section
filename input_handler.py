@@ -8,7 +8,7 @@ import pygame
 import math
 import random
 from config import CableType, SCREEN_HEIGHT, DEFAULT_CONDUIT_RADIUS, SCREEN_WIDTH # MODIFIED IMPORT
-from cable import calculate_cable_radius # Used to determine cable size for spawn positioning
+# from cable import calculate_cable_radius # No longer needed here
 
 class InputHandler:
     """
@@ -43,25 +43,26 @@ class InputHandler:
                 self.current_cable_type = CableType.FOUR_CORE
                 print("Selected Cable Type: FOUR_CORE")
                 
-    def get_spawn_position(self, current_conduit_radius: float) -> tuple[float, float]: # MODIFIED SIGNATURE
+    def get_spawn_position(self, current_conduit_radius: float, current_cable_outer_diameter: float) -> tuple[float, float]:
         """
         Calculates a suitable (x, y) position for spawning a new cable,
-        considering the current (potentially dynamic) conduit radius.
+        considering the current (potentially dynamic) conduit radius and the cable's outer diameter.
 
         The position is determined to be near the top of the conduit, with some
         random horizontal variation to prevent cables from stacking perfectly.
-        It considers the radius of the currently selected cable type and the
-        provided `current_conduit_radius` to ensure it spawns within boundaries.
+        It uses the provided `current_cable_outer_diameter` to determine the cable's physical radius
+        and ensure it spawns within boundaries of the `current_conduit_radius`.
 
         Args:
             current_conduit_radius (float): The current radius of the conduit.
+            current_cable_outer_diameter (float): The outer diameter of the cable to be spawned.
 
         Returns:
             tuple[float, float]: A tuple (spawn_x, spawn_y) representing the calculated
                                  spawn coordinates for a new cable.
         """
         # Calculate a margin based on the current cable's radius plus some padding
-        current_cable_physical_radius = calculate_cable_radius(self.current_cable_type)
+        current_cable_physical_radius = current_cable_outer_diameter / 2.0
         margin_from_wall = current_cable_physical_radius + 10 # Extra 10 units padding from conduit wall
 
         # Spawn Y position: near the top opening of the conduit.
