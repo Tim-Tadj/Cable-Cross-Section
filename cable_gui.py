@@ -197,12 +197,15 @@ class CableGUI(QWidget):
         The actual spawning is delegated to `main.spawn_cable()`.
         GUI calculation updates are handled by the QTimer.
         """
+        # Get outer diameter from the QDoubleSpinBox first, as it's needed for spawn position calculation
+        outer_diameter_value = self.outer_diameter_spinbox.value()
+        
         # Use the spawn logic from input_handler to be consistent with mouse clicks in Pygame window
-        spawn_pos = main.input_handler.get_spawn_position(main_current_conduit_radius) # MODIFIED: Pass current conduit radius
+        # Pass both conduit radius and the cable's outer diameter
+        spawn_pos = main.input_handler.get_spawn_position(main_current_conduit_radius, outer_diameter_value)
+        
         # Get cable type from the QComboBox
         selected_cable_type = self.cable_type_combo.currentData()
-        # Get outer diameter from the QDoubleSpinBox
-        outer_diameter_value = self.outer_diameter_spinbox.value()
         
         main.spawn_cable(spawn_pos, selected_cable_type, outer_diameter_value) # Call the refactored main.spawn_cable
         # self.update_calculations_display() # This is now handled by the QTimer
@@ -233,6 +236,10 @@ class CableGUI(QWidget):
         #    The `main.cables` list now stores tuples of (id, Pymunk body, Pymunk shape, CableType enum, outer_diameter).
         #    For calculation, we need a list of tuples: (CableType, outer_diameter).
         current_cables_data_for_calc = [] # Renamed to avoid confusion
+        
+        # Store current selection(s)
+        selected_items_data = [item.data(Qt.UserRole) for item in self.cable_list_widget.selectedItems()]
+        
         if hasattr(main, 'cables'): # Check if main.cables exists and is accessible
             self.cable_list_widget.clear() # Clear list before repopulating
             # Cable item in main.cables is now (id, body, shape, cable_type, outer_diameter)
@@ -245,6 +252,13 @@ class CableGUI(QWidget):
                 list_widget_item = QListWidgetItem(list_item_text) 
                 list_widget_item.setData(Qt.UserRole, cable_id) # Store ID with item
                 self.cable_list_widget.addItem(list_widget_item)
+            
+            # Restore selection(s) after repopulating
+            if selected_items_data: # Only proceed if there was a selection
+                for i in range(self.cable_list_widget.count()):
+                    item = self.cable_list_widget.item(i)
+                    if item.data(Qt.UserRole) in selected_items_data:
+                        item.setSelected(True)
         
         # 3. Calculate and display total cross-sectional area of all cables
         # The calculate_total_cable_area function will need to be updated to accept this new data format.
