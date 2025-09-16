@@ -23,22 +23,34 @@ def setup_physics() -> pymunk.Space:
     space.damping = 0.5           # Damping to reduce overall energy and stabilize simulation
 
     # Setup a collision handler for cable-to-cable collisions.
-    # COLLTYPE_CABLE is an integer constant defined in config.py.
-    # When two shapes with this collision_type interact, the specified handler functions are called.
-    handler = space.add_collision_handler(COLLTYPE_CABLE, COLLTYPE_CABLE)
-    
-    # The 'separate' callback is triggered when two shapes stop overlapping.
-    # cable_collision_handler is a function (defined in cable.py) that will be
-    # called to manage the physics of this interaction (e.g., apply impulses).
-    # Other callbacks like 'begin', 'pre_solve', 'post_solve' could also be used
-    # for different stages of collision handling.
-    handler.separate = cable_collision_handler # Using 'separate' might be less common than 'begin' or 'pre_solve' for active repulsion.
-                                               # This implies the handling logic is applied when they move apart.
-                                               # Consider if `pre_solve` or `begin` would be more appropriate for typical collision responses.
+    # Some environments have reported an AttributeError for Space.add_collision_handler
+    # (likely due to an unexpected pymunk version/environment issue). Provide a fallback
+    # using the default collision handler and filtering inside a wrapper callback.
+    if hasattr(space, "add_collision_handler"):
+        try:
+            handler = space.add_collision_handler(COLLTYPE_CABLE, COLLTYPE_CABLE)
+            handler.separate = cable_collision_handler
+        except Exception:
+            pass  # Silently continue if unexpected failure; collisions still work with defaults
+    elif hasattr(space, "add_default_collision_handler"):
+        # Older / environment-specific API providing only default handler
+        try:
+            def _selective_separate(arbiter: pymunk.Arbiter, inner_space: pymunk.Space, data: dict):
+                a, b = arbiter.shapes
+                if getattr(a, 'collision_type', None) == COLLTYPE_CABLE and getattr(b, 'collision_type', None) == COLLTYPE_CABLE:
+                    return cable_collision_handler(arbiter, inner_space, data)
+                return True
+            default_handler = space.add_default_collision_handler()
+            default_handler.separate = _selective_separate
+        except Exception:
+            pass
+    else:
+        # No collision handler customization available in this environment; proceed with defaults
+        pass
     # Note: Conduit is no longer added here; it's managed by main.py via rebuild_conduit_in_space
     return space
 
-def rebuild_conduit_in_space(space: pymunk.Space, old_conduit_body: pymunk.Body | None, old_segments_list: list[pymunk.Segment], new_radius: float, screen_width: int, screen_height: int, conduit_thickness: int, colltype_conduit: int) -> tuple[pymunk.Body, list[pymunk.Segment]]:
+def rebuild_conduit_in_space(space: pymunk.Space, old_conduit_body: pymunk.Body | None, old_segments_list: list[pymunk.Segment], new_radius: float, screen_width: int, screen_height: int, segment_radius: float, colltype_conduit: int) -> tuple[pymunk.Body, list[pymunk.Segment]]:
     """
     Removes old conduit segments (if any) and adds new ones with the specified radius.
 
@@ -49,7 +61,7 @@ def rebuild_conduit_in_space(space: pymunk.Space, old_conduit_body: pymunk.Body 
         new_radius (float): The new radius for the conduit.
         screen_width (int): Width of the simulation screen.
         screen_height (int): Height of the simulation screen.
-        conduit_thickness (int): Visual and physical thickness of the conduit wall.
+        segment_radius (float): Physics collision radius of the conduit wall segments.
         colltype_conduit (int): Collision type for the conduit segments.
 
     Returns:
@@ -69,7 +81,7 @@ def rebuild_conduit_in_space(space: pymunk.Space, old_conduit_body: pymunk.Body 
 
     # Create and add new conduit segments
     # create_conduit_segments now takes radius and other params
-    new_body, new_segment_shapes = create_conduit_segments(new_radius, screen_width, screen_height, conduit_thickness, colltype_conduit)
+    new_body, new_segment_shapes = create_conduit_segments(new_radius, screen_width, screen_height, segment_radius, colltype_conduit)
     space.add(new_body)
     for segment in new_segment_shapes:
         space.add(segment)

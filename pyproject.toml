@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "cx-freeze>=8.4.0",
     "pygame>=2.6.1",
     "pymunk>=6.11.1",
     "pyside6>=6.9.0",

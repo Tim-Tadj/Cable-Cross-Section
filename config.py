@@ -19,11 +19,14 @@ CABLE_SHEATH_COLOR = (255, 165, 0)  # Orange, for the outer sheath of cables
 CONDUCTOR_COLOR = (184, 115, 51)    # Copper/Brown, for the conductor part of cable cores
 
 # --- Cable and Conduit Physical Parameters (all units are abstract, e.g., pixels or mm) ---
-DEFAULT_CONDUIT_RADIUS = 300 # Renamed from CONDUIT_RADIUS # Internal radius of the conduit
-CONDUIT_THICKNESS = 5       # Visual thickness of the conduit wall when drawn
-CORE_RADIUS = 30            # Radius of a single electrical core within a cable
-SHEATH_THICKNESS = 3        # Thickness of the protective outer sheath of a cable
-MARGIN = 2                  # Additional margin around cables for physics calculations (spacing)
+# Conduit size: prefer diameter as user-visible setting. Internal physics still uses radius.
+DEFAULT_CONDUIT_DIAMETER = 100  # Default internal conduit diameter in mm (user-facing)
+CONDUIT_THICKNESS = 5       # Visual thickness of the conduit wall when drawn (mm/pixels)
+CONDUIT_SEGMENT_RADIUS = 1  # Physics collision radius of conduit segments; keep small so cables touch visually
+CORE_RADIUS = 30            # Radius of a single electrical core (conductor) within a cable
+SHEATH_THICKNESS = 1.8      # Thickness of the protective outer sheath of a cable
+CORE_INSULATION_THICKNESS = 0.8  # Thickness of insulation around each core (inner sheath)
+MARGIN = 0.2                # Additional margin around cables for physics calculations (spacing)
 
 # --- Pymunk Physics Collision Types ---
 # These are arbitrary integer constants used to categorize different types of physics shapes.

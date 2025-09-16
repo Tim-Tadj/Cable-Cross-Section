@@ -7,7 +7,7 @@ for determining cable spawn positions.
 import pygame
 import math
 import random
-from config import CableType, SCREEN_HEIGHT, DEFAULT_CONDUIT_RADIUS, SCREEN_WIDTH # MODIFIED IMPORT
+from config import CableType, SCREEN_HEIGHT, DEFAULT_CONDUIT_DIAMETER, SCREEN_WIDTH # MODIFIED IMPORT
 # from cable import calculate_cable_radius # No longer needed here
 
 class InputHandler:

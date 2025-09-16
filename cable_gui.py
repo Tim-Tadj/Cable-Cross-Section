@@ -1,12 +1,28 @@
 import sys
 import threading
-from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QColorDialog, QLabel, QSpinBox, QHBoxLayout, QGroupBox,
-                               QListWidget, QAbstractItemView, QComboBox, QDoubleSpinBox) 
-from PySide6.QtGui import QColor
-from PySide6.QtCore import Qt, QTimer
+import signal
+from PySide6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QVBoxLayout,
+    QPushButton,
+    QColorDialog,
+    QLabel,
+    QSpinBox,
+    QHBoxLayout,
+    QGroupBox,
+    QListWidget,
+    QAbstractItemView,
+    QComboBox,
+    QDoubleSpinBox,
+    QListWidgetItem,
+    QCheckBox,
+    QLineEdit,
+)
+from PySide6.QtGui import QColor, QDoubleValidator
+from PySide6.QtCore import Qt, QTimer, QLocale
 import main  # Import your main.py file
-from main import input_handler, update_simulation_conduit_radius, current_conduit_radius as main_current_conduit_radius
+from main import input_handler  # use input_handler from main
 # Qt.UserRole is used with item.data() / item.setData()
 from calculations import (
     calculate_conduit_cross_sectional_area,
@@ -15,7 +31,7 @@ from calculations import (
     check_as_nzs_compliance
 )
 # CONDUIT_RADIUS is now main_current_conduit_radius, DEFAULT_CONDUIT_RADIUS is in config
-from config import CORE_RADIUS, SHEATH_THICKNESS, MARGIN, CableType, DEFAULT_CONDUIT_RADIUS 
+from config import CORE_RADIUS, SHEATH_THICKNESS, MARGIN, CableType, DEFAULT_CONDUIT_DIAMETER, CORE_INSULATION_THICKNESS 
 
 class CableGUI(QWidget):
     """
@@ -37,6 +53,13 @@ class CableGUI(QWidget):
         self.sheath_color = QColor(*main.CABLE_SHEATH_COLOR)
         self.background_color = QColor(*main.BACKGROUND_COLOR)
 
+        # Initialize flags before building UI since recompute may be called during setup
+        self.control_by_od = False
+        self._updating_fields = False
+        self.outer_diameter_step = 0.5
+        self.outer_diameter_min = 0.0
+        self.outer_diameter_max = 2000.0
+        self._last_outer_diameter_value = 0.0
         self.initUI()
         # self.start_pygame_thread() # Moved after QTimer setup
 
@@ -48,7 +71,11 @@ class CableGUI(QWidget):
         # displayed calculations (fill percentage, compliance) are periodically
         # refreshed to reflect the state of the simulation (main.cables list).
         self.calc_update_timer.start(500) # Update every 500ms (0.5 seconds)
-        
+
+        self._pygame_thread = None
+        if hasattr(main, 'register_exit_callback'):
+            main.register_exit_callback(self._handle_simulation_exit_request)
+
         self.start_pygame_thread() # Ensure Pygame thread is started
 
     def initUI(self):
@@ -75,15 +102,84 @@ class CableGUI(QWidget):
         for cable_type in CableType:
             self.cable_type_combo.addItem(cable_type.name.replace("_", " ").title(), cable_type)
         layout.addWidget(self.cable_type_combo)
+        self.cable_type_combo.currentIndexChanged.connect(self.recompute_outer_diameter)
 
-        # Outer Diameter Input
+        # Core Area Input
+        self.core_area_label = QLabel("Core Area (mm²):")
+        layout.addWidget(self.core_area_label)
+        self.core_area_spinbox = QDoubleSpinBox()
+        self.core_area_spinbox.setRange(0.5, 1000.0)
+        self.core_area_spinbox.setValue(25.0)
+        self.core_area_spinbox.setSingleStep(1.0)
+        layout.addWidget(self.core_area_spinbox)
+        self.core_area_spinbox.valueChanged.connect(self.recompute_outer_diameter)
+
+        # Sheath Thickness Input
+        self.sheath_label = QLabel("Sheath Thickness (mm):")
+        layout.addWidget(self.sheath_label)
+        self.sheath_spinbox = QDoubleSpinBox()
+        self.sheath_spinbox.setRange(0.1, 20.0)
+        self.sheath_spinbox.setValue(SHEATH_THICKNESS)
+        self.sheath_spinbox.setSingleStep(0.1)
+        layout.addWidget(self.sheath_spinbox)
+        self.sheath_spinbox.valueChanged.connect(self.recompute_outer_diameter)
+
+        # Inner Sheath (Core Insulation) Thickness Input
+        self.inner_sheath_label = QLabel("Inner Sheath (Core Insulation) (mm):")
+        layout.addWidget(self.inner_sheath_label)
+        self.inner_sheath_spinbox = QDoubleSpinBox()
+        self.inner_sheath_spinbox.setRange(0.0, 10.0)
+        self.inner_sheath_spinbox.setValue(CORE_INSULATION_THICKNESS)
+        self.inner_sheath_spinbox.setSingleStep(0.1)
+        layout.addWidget(self.inner_sheath_spinbox)
+        self.inner_sheath_spinbox.valueChanged.connect(self.recompute_outer_diameter)
+
+        # Margin Input
+        self.margin_label = QLabel("Margin (mm):")
+        layout.addWidget(self.margin_label)
+        self.margin_spinbox = QDoubleSpinBox()
+        self.margin_spinbox.setRange(0.0, 20.0)
+        self.margin_spinbox.setValue(MARGIN)
+        self.margin_spinbox.setSingleStep(0.1)
+        layout.addWidget(self.margin_spinbox)
+        self.margin_spinbox.valueChanged.connect(self.recompute_outer_diameter)
+
+        # Outer Diameter controls (manual input with optional incremental buttons)
         self.outer_diameter_label = QLabel("Outer Diameter (mm):")
         layout.addWidget(self.outer_diameter_label)
-        self.outer_diameter_spinbox = QDoubleSpinBox()
-        self.outer_diameter_spinbox.setRange(10.0, 100.0)
-        self.outer_diameter_spinbox.setValue(60.0) # Default: CORE_RADIUS * 2 for a single core
-        self.outer_diameter_spinbox.setSingleStep(1.0)
-        layout.addWidget(self.outer_diameter_spinbox)
+        od_row = QHBoxLayout()
+        self.outer_diameter_edit = QLineEdit()
+        self.outer_diameter_edit.setAlignment(Qt.AlignRight)
+        self.outer_diameter_edit.setText("0.00")
+        self.outer_diameter_edit.setFocusPolicy(Qt.StrongFocus)
+        od_validator = QDoubleValidator(0.0, 2000.0, 2, self.outer_diameter_edit)
+        od_validator.setNotation(QDoubleValidator.StandardNotation)
+        od_validator.setLocale(QLocale.c())
+        self.outer_diameter_edit.setValidator(od_validator)
+        self.outer_diameter_edit.editingFinished.connect(self.on_outer_diameter_editing_finished)
+        od_row.addWidget(self.outer_diameter_edit)
+
+        self.od_minus_button = QPushButton("-")
+        self.od_minus_button.setFixedWidth(32)
+        self.od_minus_button.clicked.connect(lambda: self.adjust_outer_diameter(-self.outer_diameter_step))
+        od_row.addWidget(self.od_minus_button)
+
+        self.od_plus_button = QPushButton("+")
+        self.od_plus_button.setFixedWidth(32)
+        self.od_plus_button.clicked.connect(lambda: self.adjust_outer_diameter(self.outer_diameter_step))
+        od_row.addWidget(self.od_plus_button)
+
+        layout.addLayout(od_row)
+        self.recompute_outer_diameter()
+
+        # Control by OD toggle
+        od_toggle_row = QHBoxLayout()
+        self.control_by_od_checkbox = QCheckBox("Control by OD (scale proportions)")
+        self.control_by_od_checkbox.toggled.connect(self.toggle_control_by_od)
+        od_toggle_row.addWidget(self.control_by_od_checkbox)
+        layout.addLayout(od_toggle_row)
+        # Initialize manual control off by default
+        self.toggle_control_by_od(False)
 
         # Spawn Cable Button
         self.spawn_button = QPushButton("Spawn Cable")
@@ -94,6 +190,20 @@ class CableGUI(QWidget):
         self.reset_button = QPushButton("Reset View")
         self.reset_button.clicked.connect(self.reset_view)
         layout.addWidget(self.reset_button)
+
+        # Zoom Control
+        zoom_row = QHBoxLayout()
+        zoom_label = QLabel("Zoom:")
+        self.zoom_spinbox = QDoubleSpinBox()
+        self.zoom_spinbox.setRange(0.25, 10.0)
+        self.zoom_spinbox.setSingleStep(0.1)
+        # Initialize from main if present
+        initial_zoom = float(getattr(main, 'render_zoom', 1.0))
+        self.zoom_spinbox.setValue(initial_zoom)
+        self.zoom_spinbox.valueChanged.connect(self.apply_zoom_change)
+        zoom_row.addWidget(zoom_label)
+        zoom_row.addWidget(self.zoom_spinbox)
+        layout.addLayout(zoom_row)
 
         # Create a group box for calculations display
         calculations_group = QGroupBox("Conduit Fill Calculations")
@@ -115,20 +225,21 @@ class CableGUI(QWidget):
         active_cables_label = QLabel("Active Cables in Conduit:")
         calc_layout.addWidget(active_cables_label)
         self.cable_list_widget = QListWidget()
-        self.cable_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection) 
+        self.cable_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
         calc_layout.addWidget(self.cable_list_widget)
 
         self.remove_selected_button = QPushButton("Remove Selected Cables")
         self.remove_selected_button.clicked.connect(self.remove_selected_cables_from_gui)
         calc_layout.addWidget(self.remove_selected_button)
 
-        # Conduit Radius Adjustment
-        conduit_size_label = QLabel("Conduit Radius (mm):")
+        # Conduit Diameter Adjustment (user-facing)
+        conduit_size_label = QLabel("Conduit Diameter (mm):")
         calc_layout.addWidget(conduit_size_label)
 
         self.conduit_radius_spinbox = QSpinBox()
         self.conduit_radius_spinbox.setRange(50, 500) # Example range
-        self.conduit_radius_spinbox.setValue(int(main_current_conduit_radius)) # Use imported initial value
+        # Initialize spinbox with current diameter value exposed by main
+        self.conduit_radius_spinbox.setValue(int(getattr(main, 'current_conduit_diameter', DEFAULT_CONDUIT_DIAMETER))) # Use dynamic value if present
         calc_layout.addWidget(self.conduit_radius_spinbox)
 
         self.apply_conduit_size_button = QPushButton("Apply Conduit Size")
@@ -140,6 +251,11 @@ class CableGUI(QWidget):
 
         self.setLayout(layout)
         self.update_calculations_display() # Initial update to populate calculation labels
+
+    def apply_zoom_change(self, value: float):
+        """Apply zoom changes to the Pygame render via main.set_render_zoom."""
+        if hasattr(main, 'set_render_zoom'):
+            main.set_render_zoom(float(value))
 
     def create_color_button(self, text: str, initial_color: QColor, callback: callable) -> QPushButton:
         """
@@ -197,18 +313,136 @@ class CableGUI(QWidget):
         The actual spawning is delegated to `main.spawn_cable()`.
         GUI calculation updates are handled by the QTimer.
         """
-        # Get outer diameter from the QDoubleSpinBox first, as it's needed for spawn position calculation
-        outer_diameter_value = self.outer_diameter_spinbox.value()
+        # Get outer diameter value for spawn position calculation
+        outer_diameter_value = self.clamp_outer_diameter(self.get_outer_diameter_value())
         
         # Use the spawn logic from input_handler to be consistent with mouse clicks in Pygame window
         # Pass both conduit radius and the cable's outer diameter
-        spawn_pos = main.input_handler.get_spawn_position(main_current_conduit_radius, outer_diameter_value)
+        # Convert main's user-facing diameter to radius for the spawn position calculation
+        spawn_pos = main.input_handler.get_spawn_position(getattr(main, 'current_conduit_diameter', DEFAULT_CONDUIT_DIAMETER) / 2.0, outer_diameter_value)
         
         # Get cable type from the QComboBox
         selected_cable_type = self.cable_type_combo.currentData()
-        
-        main.spawn_cable(spawn_pos, selected_cable_type, outer_diameter_value) # Call the refactored main.spawn_cable
+
+        # Compute core radius from area to pass to main.spawn_cable
+        import math
+        core_area = self.core_area_spinbox.value()
+        core_radius = math.sqrt(core_area / math.pi)
+        sheath = self.sheath_spinbox.value()
+        inner_ins = self.inner_sheath_spinbox.value()
+        margin = self.margin_spinbox.value()
+        main.spawn_cable(spawn_pos, selected_cable_type, outer_diameter_value, core_radius, sheath, margin, inner_ins)
         # self.update_calculations_display() # This is now handled by the QTimer
+
+    def recompute_outer_diameter(self):
+        if self.control_by_od:
+            # In manual OD mode, do not overwrite the user's OD selection
+            return
+        # Compute OD from core area, sheath, margin, and cable type
+        from cable import compute_outer_diameter_for_core_area
+        selected_cable_type = self.cable_type_combo.currentData()
+        core_area = self.core_area_spinbox.value()
+        sheath = self.sheath_spinbox.value()
+        inner_ins = self.inner_sheath_spinbox.value()
+        margin = self.margin_spinbox.value()
+        if selected_cable_type is None or core_area <= 0:
+            self.set_outer_diameter_display(0.0)
+            return
+        od = compute_outer_diameter_for_core_area(selected_cable_type, core_area, sheath, margin, inner_ins)
+        self.set_outer_diameter_display(od)
+
+    def toggle_control_by_od(self, checked: bool):
+        self.control_by_od = bool(checked)
+        # Toggle OD editability and step buttons
+        self.outer_diameter_edit.setPlaceholderText("Type OD and press Enter" if self.control_by_od else "")
+        # Keep the field interactive at all times; just visually hint using palette
+        if self.control_by_od:
+            self.outer_diameter_edit.setStyleSheet("")
+        else:
+            self.outer_diameter_edit.setStyleSheet("background-color: palette(alternate-base);")
+        self.od_minus_button.setEnabled(self.control_by_od)
+        self.od_plus_button.setEnabled(self.control_by_od)
+        if not self.control_by_od:
+            # Sync OD back to computed value
+            self.recompute_outer_diameter()
+        else:
+            # Ensure text is formatted when enabling manual mode
+            self.set_outer_diameter_display(self.get_outer_diameter_value())
+        self.outer_diameter_edit.setFocusPolicy(Qt.StrongFocus)
+
+    def apply_manual_outer_diameter(self, new_value: float, update_display: bool = True):
+        # Apply manual OD scaling when in control-by-OD mode
+        if not self.control_by_od or self._updating_fields:
+            return
+        new_value = self.clamp_outer_diameter(float(new_value))
+        from cable import compute_outer_diameter_for_core_area
+        selected_cable_type = self.cable_type_combo.currentData()
+        if selected_cable_type is None:
+            return
+        # Compute current OD based on present parameters to establish scale factor
+        core_area = self.core_area_spinbox.value()
+        sheath = self.sheath_spinbox.value()
+        inner_ins = self.inner_sheath_spinbox.value()
+        margin = self.margin_spinbox.value()
+        current_od = compute_outer_diameter_for_core_area(selected_cable_type, core_area, sheath, margin, inner_ins)
+        if current_od <= 0:
+            return
+        scale = float(new_value) / float(current_od)
+        if scale <= 0:
+            return
+        # Scale parameters proportionally: radii scale by s; areas scale by s^2
+        new_core_area = core_area * (scale ** 2)
+        new_sheath = sheath * scale
+        new_inner = inner_ins * scale
+        new_margin = margin * scale
+        # Apply without recursive loops
+        prev_flag = self._updating_fields
+        self._updating_fields = True
+        try:
+            self.core_area_spinbox.setValue(new_core_area)
+            self.sheath_spinbox.setValue(new_sheath)
+            self.inner_sheath_spinbox.setValue(new_inner)
+            self.margin_spinbox.setValue(new_margin)
+        finally:
+            self._updating_fields = prev_flag
+        if update_display:
+            self.set_outer_diameter_display(new_value)
+
+    def on_outer_diameter_editing_finished(self):
+        # When typing and pressing enter/defocusing, apply scaling once with the final value
+        if not self.control_by_od or self._updating_fields:
+            return
+        value = self.clamp_outer_diameter(self.get_outer_diameter_value())
+        self.apply_manual_outer_diameter(value)
+
+    def get_outer_diameter_value(self) -> float:
+        text = self.outer_diameter_edit.text().strip()
+        if not text:
+            return self._last_outer_diameter_value
+        try:
+            value = float(text)
+        except ValueError:
+            value = self._last_outer_diameter_value
+        return value
+
+    def clamp_outer_diameter(self, value: float) -> float:
+        return max(self.outer_diameter_min, min(self.outer_diameter_max, float(value)))
+
+    def adjust_outer_diameter(self, delta: float):
+        if not self.control_by_od:
+            return
+        current = self.clamp_outer_diameter(self.get_outer_diameter_value())
+        new_value = self.clamp_outer_diameter(current + delta)
+        self.apply_manual_outer_diameter(new_value)
+
+    def set_outer_diameter_display(self, value: float):
+        self._last_outer_diameter_value = float(value)
+        prev_flag = self._updating_fields
+        self._updating_fields = True
+        try:
+            self.outer_diameter_edit.setText(f"{float(value):.2f}")
+        finally:
+            self._updating_fields = prev_flag
 
     def reset_view(self):
         """
@@ -228,8 +462,8 @@ class CableGUI(QWidget):
         It's typically called by the QTimer or after a reset/conduit size change.
         """
         # 1. Calculate and display conduit's total internal area
-        # Use the dynamically updated conduit radius from main.py
-        conduit_area = calculate_conduit_cross_sectional_area(main_current_conduit_radius) 
+        # Use the dynamically updated conduit diameter from main.py and convert to radius for the calculation
+        conduit_area = calculate_conduit_cross_sectional_area(getattr(main, 'current_conduit_diameter', DEFAULT_CONDUIT_DIAMETER) / 2.0)
         self.conduit_area_label.setText(f"Conduit Area: {conduit_area:.2f} mm²")
 
         # 2. Prepare cable data for calculations.
@@ -242,14 +476,22 @@ class CableGUI(QWidget):
         
         if hasattr(main, 'cables'): # Check if main.cables exists and is accessible
             self.cable_list_widget.clear() # Clear list before repopulating
-            # Cable item in main.cables is now (id, body, shape, cable_type, outer_diameter)
-            for cable_id, _body, _shape, cable_type_enum, outer_diameter in main.cables: 
+            # Cable item in main.cables is now (id, body, shape, cable_type, outer_diameter, core_radius, sheath, margin)
+            for cable_entry in main.cables:
+                # Unpack safely to support older tuple sizes
+                if len(cable_entry) >= 5:
+                    cable_id = cable_entry[0]
+                    cable_type_enum = cable_entry[3]
+                    outer_diameter = cable_entry[4]
+                else:
+                    # Fallback for older tuple formats
+                    cable_id, _body, _shape, cable_type_enum, outer_diameter = cable_entry
                 # For calculation data:
                 current_cables_data_for_calc.append((cable_type_enum, outer_diameter))
-                
+
                 # For display in QListWidget:
                 list_item_text = f"ID: {cable_id} - Type: {cable_type_enum.name} - OD: {outer_diameter:.1f}mm"
-                list_widget_item = QListWidgetItem(list_item_text) 
+                list_widget_item = QListWidgetItem(list_item_text)
                 list_widget_item.setData(Qt.UserRole, cable_id) # Store ID with item
                 self.cable_list_widget.addItem(list_widget_item)
             
@@ -292,6 +534,26 @@ class CableGUI(QWidget):
         pygame_thread = threading.Thread(target=main.main)
         pygame_thread.daemon = True # Ensures thread exits when main application exits
         pygame_thread.start()
+        self._pygame_thread = pygame_thread
+        if hasattr(main, 'set_simulation_thread'):
+            main.set_simulation_thread(pygame_thread)
+
+    def _handle_simulation_exit_request(self):
+        """Callback from the simulation thread when it finishes or is closed."""
+        QTimer.singleShot(0, self._quit_application)
+
+    def _quit_application(self):
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def closeEvent(self, event):
+        """Ensure the simulation thread stops when the GUI window closes."""
+        if hasattr(main, 'request_simulation_shutdown'):
+            main.request_simulation_shutdown()
+        if hasattr(main, 'join_simulation_thread'):
+            main.join_simulation_thread(2.0)
+        super().closeEvent(event)
 
     def remove_selected_cables_from_gui(self):
         """
@@ -319,15 +581,39 @@ class CableGUI(QWidget):
         Calls main.update_simulation_conduit_radius to trigger the change in the physics space.
         The QTimer will handle updating the calculations display.
         """
-        new_radius = float(self.conduit_radius_spinbox.value())
-        update_simulation_conduit_radius(new_radius)
-        # QTimer will call update_calculations_display, which now uses 
+        # Value in the spinbox represents diameter (user-facing)
+        new_diameter = float(self.conduit_radius_spinbox.value())
+        # Call the diameter-based update function in main
+        if hasattr(main, 'update_simulation_conduit_diameter'):
+            main.update_simulation_conduit_diameter(new_diameter)
+        else:
+            # Fall back to the radius-based API if needed
+            if hasattr(main, 'update_simulation_conduit_radius'):
+                main.update_simulation_conduit_radius(new_diameter / 2.0)
+        # QTimer will call update_calculations_display, which now uses
         # main.current_conduit_radius for its conduit area calculation.
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    # Need to ensure QListWidgetItem is available if not using FQCN
-    from PySide6.QtWidgets import QListWidgetItem 
+
+    def _handle_sigint(sig, frame):
+        if hasattr(main, 'request_simulation_shutdown'):
+            main.request_simulation_shutdown()
+        app.quit()
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+
     gui = CableGUI()
     gui.show()
-    sys.exit(app.exec())
+
+    try:
+        exit_code = app.exec()
+    except KeyboardInterrupt:
+        exit_code = 0
+    finally:
+        if hasattr(main, 'request_simulation_shutdown'):
+            main.request_simulation_shutdown()
+        if hasattr(main, 'join_simulation_thread'):
+            main.join_simulation_thread(2.0)
+
+    sys.exit(exit_code)

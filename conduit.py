@@ -9,7 +9,7 @@ import pygame # Added for type hinting in draw_conduit
 
 # from config import * # No longer needed if all params are passed
 
-def create_conduit_segments(radius: float, screen_width: int, screen_height: int, conduit_thickness: int, colltype_conduit: int) -> tuple[pymunk.Body, list[pymunk.Segment]]:
+def create_conduit_segments(radius: float, screen_width: int, screen_height: int, segment_radius: float, colltype_conduit: int) -> tuple[pymunk.Body, list[pymunk.Segment]]:
     """
     Creates the static physics segments that form the circular boundary of the conduit.
 
@@ -20,7 +20,7 @@ def create_conduit_segments(radius: float, screen_width: int, screen_height: int
         radius (float): The internal radius of the conduit.
         screen_width (int): Width of the simulation screen.
         screen_height (int): Height of the simulation screen.
-        conduit_thickness (int): Visual and physical thickness of the conduit wall.
+        segment_radius (float): Physics collision radius for conduit segments. Small (e.g., 1) gives tight contact.
         colltype_conduit (int): Collision type for the conduit segments.
 
 
@@ -47,8 +47,8 @@ def create_conduit_segments(radius: float, screen_width: int, screen_height: int
         x2 = screen_width / 2 + radius * math.cos(angle2)
         y2 = screen_height / 2 + radius * math.sin(angle2)
 
-        # Create a Pymunk segment shape
-        segment = pymunk.Segment(body, (x1, y1), (x2, y2), conduit_thickness) # Use passed conduit_thickness
+        # Create a Pymunk segment shape with small physics radius so cables can visually touch the wall
+        segment = pymunk.Segment(body, (x1, y1), (x2, y2), segment_radius)
         segment.friction = 0.5      # Standard friction property
         segment.elasticity = 0.4    # Some bounciness
         segment.collision_type = colltype_conduit # Use passed colltype_conduit

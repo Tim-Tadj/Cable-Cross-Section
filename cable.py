@@ -5,8 +5,52 @@ Cables can be single-core, three-core, or four-core, each with specific
 geometric arrangements for their cores.
 """
 import math
-from config import * # Imports global configurations like CORE_RADIUS, SHEATH_THICKNESS, colors, etc.
+from config import * # Imports global configurations like CORE_RADIUS, SHEATH_THICKNESS, CORE_INSULATION_THICKNESS, colors, etc.
 import pymunk # For physics object creation (Body, Circle)
+
+def compute_outer_diameter_for_core_area(
+    cable_type: CableType,
+    core_area: float,
+    sheath: float,
+    margin: float,
+    core_insulation_thickness: float = CORE_INSULATION_THICKNESS,
+) -> float:
+    """
+    Given cable type, core conductor area (mm²), sheath thickness, and margin,
+    compute the required outer diameter to fully enclose all cores.
+    """
+    # r_core is the conductor radius derived from area; add insulation to get effective core radius
+    r_core = math.sqrt(core_area / math.pi)
+    r_eff = r_core + core_insulation_thickness
+    if cable_type == CableType.SINGLE:
+        r_bound = r_eff
+    elif cable_type == CableType.THREE_CORE:
+        R = (2 * r_eff) / math.sqrt(3)
+        r_bound = R + r_eff
+    else:  # FOUR_CORE
+        d = math.sqrt(2) * r_eff
+        r_bound = d + r_eff
+    outer_radius = r_bound + sheath + margin
+    return 2 * outer_radius
+
+def compute_min_outer_diameter(cable_type: CableType) -> float:
+        """Return the minimum outer diameter needed to fully enclose the cores + sheath.
+
+        Geometry assumptions:
+        - SINGLE: diameter = 2*CORE_RADIUS + 2*SHEATH_THICKNESS
+        - THREE_CORE (trefoil): cores are at radius R = (2*CORE_RADIUS)/sqrt(3) from center.
+            Bounding circle radius = R + CORE_RADIUS. Outer diameter = 2*(R + CORE_RADIUS) + 2*SHEATH_THICKNESS.
+        - FOUR_CORE (diamond): core centers at distance d = sqrt(2)*CORE_RADIUS along axes.
+            Bounding circle radius = d + CORE_RADIUS. Outer diameter = 2*(d + CORE_RADIUS) + 2*SHEATH_THICKNESS.
+        """
+        if cable_type == CableType.SINGLE:
+                return 2 * CORE_RADIUS + 2 * SHEATH_THICKNESS
+        if cable_type == CableType.THREE_CORE:
+                R = (2 * CORE_RADIUS) / math.sqrt(3)
+                return 2 * (R + CORE_RADIUS) + 2 * SHEATH_THICKNESS
+        # FOUR_CORE
+        d = math.sqrt(2) * CORE_RADIUS
+        return 2 * (d + CORE_RADIUS) + 2 * SHEATH_THICKNESS
 
 def cable_collision_handler(arbiter: pymunk.Arbiter, space: pymunk.Space, data: dict) -> bool:
     """
@@ -96,7 +140,15 @@ def get_core_positions(cable_type: CableType, cable_radius: float) -> list[tuple
             (-core_center_distance, 0), # Left
         ]
 
-def create_cable(position: tuple[float, float], cable_type: CableType, outer_diameter: float) -> tuple[pymunk.Body, pymunk.Circle, CableType, float]:
+def create_cable(
+    position: tuple[float, float],
+    cable_type: CableType,
+    outer_diameter: float,
+    core_radius: float,
+    sheath: float,
+    margin: float,
+    core_insulation_thickness: float,
+) -> tuple[pymunk.Body, pymunk.Circle, CableType, float, float, float, float, float]:
     """
     Creates a Pymunk physics body and shape for a cable.
 
@@ -111,21 +163,29 @@ def create_cable(position: tuple[float, float], cable_type: CableType, outer_dia
     """
     mass = 1 # Arbitrary mass for the cable
     effective_radius = calculate_cable_radius(outer_diameter)
-    # Calculate moment of inertia for a solid circle
     moment = pymunk.moment_for_circle(mass, 0, effective_radius)
-    body = pymunk.Body(mass, moment) # Create the rigid body
-    body.position = position # Set its initial position
-
-    # Create the circular physics shape for the cable
+    body = pymunk.Body(mass, moment)
+    body.position = position
     shape = pymunk.Circle(body, effective_radius)
-    shape.friction = 0.5      # Standard friction
-    shape.elasticity = 0.4    # Some bounciness
-    shape.collision_type = COLLTYPE_CABLE # Assign custom collision type for specific handling
-    shape.filter = pymunk.ShapeFilter(categories=0b1) # Belongs to category 1 (e.g., for collision filtering)
+    shape.friction = 0.5
+    shape.elasticity = 0.4
+    shape.collision_type = COLLTYPE_CABLE
+    shape.filter = pymunk.ShapeFilter(categories=0b1)
+    return body, shape, cable_type, outer_diameter, core_radius, sheath, margin, core_insulation_thickness
 
-    return body, shape, cable_type, outer_diameter # Return the body, shape, its type and outer_diameter
-
-def draw_cable(screen: pygame.Surface, body: pymunk.Body, cable_type: CableType, outer_diameter: float):
+def draw_cable(
+    screen: pygame.Surface,
+    body: pymunk.Body,
+    cable_type: CableType,
+    outer_diameter: float,
+    core_radius: float,
+    sheath: float,
+    margin: float,
+    core_insulation_thickness: float,
+    zoom: float,
+    center_x: int,
+    center_y: int,
+):
     """
     Draws a cable, including its sheath and individual cores, on the Pygame screen.
 
@@ -139,49 +199,61 @@ def draw_cable(screen: pygame.Surface, body: pymunk.Body, cable_type: CableType,
     """
     pos = body.position # Center position of the cable body
     angle = body.angle  # Current rotation angle of the cable body
-    effective_cable_radius = outer_diameter / 2 # Overall radius for drawing
-
+    # Apply zoom around the screen center
+    draw_x = int(center_x + (pos.x - center_x) * zoom)
+    draw_y = int(center_y + (pos.y - center_y) * zoom)
+    effective_cable_radius = (outer_diameter / 2) * zoom
     # 1. Draw the outer sheath of the cable
     pygame.draw.circle(
-        screen, CABLE_SHEATH_COLOR, (int(pos.x), int(pos.y)), effective_cable_radius
+        screen, CABLE_SHEATH_COLOR, (draw_x, draw_y), int(effective_cable_radius)
     )
-
-    # 2. Draw an inner circle representing the area just inside the sheath (optional visual detail)
-    # This color (230, 140, 0) is a dark yellow/orange, perhaps representing insulation layer.
-    # SHEATH_THICKNESS is used here, assuming it's a visual property independent of the main outer_diameter for physics.
-    # If SHEATH_THICKNESS should scale, this needs adjustment.
+    # 2. Draw an inner circle representing the area just inside the sheath
     pygame.draw.circle(
         screen,
-        (230, 140, 0), # Example: Inner insulation color
-        (int(pos.x), int(pos.y)),
-        effective_cable_radius - SHEATH_THICKNESS, # Radius is sheath boundary minus sheath thickness
+        (230, 140, 0),
+        (draw_x, draw_y),
+        max(1, int(effective_cable_radius - sheath * zoom))
     )
-
     # 3. Get relative positions of cores and their colors
-    # Note: effective_cable_radius passed to get_core_positions is now outer_diameter / 2.
-    # The core positions are still based on global CORE_RADIUS, so they might look disproportionate.
-    core_relative_positions = get_core_positions(cable_type, effective_cable_radius)
-    # Fetch core colors based on cable type (e.g., "single", "three_core")
-    core_color_set = CORE_COLORS[cable_type.value] # .value gives the string key for the dict
-
+    # Use effective radius (conductor + insulation) for layout geometry
+    eff_core_r = core_radius + core_insulation_thickness
+    if cable_type == CableType.SINGLE:
+        core_relative_positions = [(0, 0)]
+    elif cable_type == CableType.THREE_CORE:
+        core_center_distance = (2 * eff_core_r) / math.sqrt(3)
+        angles = [0, 2 * math.pi / 3, 4 * math.pi / 3]
+        core_relative_positions = [
+            (math.cos(angle) * core_center_distance, math.sin(angle) * core_center_distance)
+            for angle in angles
+        ]
+    else:
+        core_center_distance = math.sqrt(2) * eff_core_r
+        core_relative_positions = [
+            (0, -core_center_distance),
+            (core_center_distance, 0),
+            (0, core_center_distance),
+            (-core_center_distance, 0),
+        ]
+    core_color_set = CORE_COLORS[cable_type.value]
     # 4. Draw each core
     for i, (offset_x, offset_y) in enumerate(core_relative_positions):
-        # Rotate the core's relative offset by the cable body's angle
         rotated_x = offset_x * math.cos(angle) - offset_y * math.sin(angle)
         rotated_y = offset_x * math.sin(angle) + offset_y * math.cos(angle)
-
-        # Calculate the absolute world position of the core's center
-        core_x_world = int(pos.x + rotated_x)
-        core_y_world = int(pos.y + rotated_y)
-
-        # Determine the color for the current core
-        # CORE_COLORS can provide a single color (for single-core) or a list (for multi-core)
+        core_x_world = center_x + int((pos.x + rotated_x - center_x) * zoom)
+        core_y_world = center_y + int((pos.y + rotated_y - center_y) * zoom)
         current_core_color = core_color_set[i] if isinstance(core_color_set, list) else core_color_set
-        
         # Draw the core insulation
-        pygame.draw.circle(screen, current_core_color, (core_x_world, core_y_world), CORE_RADIUS)
-        
+        # Draw insulated core radius (conductor + insulation)
+        pygame.draw.circle(
+            screen,
+            current_core_color,
+            (core_x_world, core_y_world),
+            max(1, int((core_radius + core_insulation_thickness) * zoom))
+        )
         # Draw the conductor part of the core (slightly smaller, metallic color)
         pygame.draw.circle(
-            screen, CONDUCTOR_COLOR, (core_x_world, core_y_world), CORE_RADIUS - 2 # -2 makes it appear as an inner circle
+            screen,
+            CONDUCTOR_COLOR,
+            (core_x_world, core_y_world),
+            max(int(core_radius * zoom), 1),
         )
