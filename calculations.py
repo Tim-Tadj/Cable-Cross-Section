@@ -13,8 +13,8 @@ from config import CORE_RADIUS, SHEATH_THICKNESS, MARGIN, CableType # Import nec
 # or the latest revisions of the standard. For precise engineering compliance,
 # the full AS/NZS 3000 standard, including all relevant amendments and clauses,
 # must be consulted.
-AS_NZS_MAX_FILL_ONE_CABLE = 53.0  # % Max fill for a single cable.
-AS_NZS_MAX_FILL_TWO_CABLES = 31.0  # % Max total fill for two cables.
+AS_NZS_MAX_FILL_ONE_CABLE = 50.0  # % Max fill for a single cable.
+AS_NZS_MAX_FILL_TWO_CABLES = 33.0  # % Max total fill for two cables.
 AS_NZS_MAX_FILL_THREE_OR_MORE_CABLES = 40.0  # % Max total fill for three or more cables.
 
 def calculate_conduit_cross_sectional_area(conduit_radius: float) -> float:
