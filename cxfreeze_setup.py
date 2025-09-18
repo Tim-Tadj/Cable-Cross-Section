@@ -2,7 +2,7 @@
 from cx_Freeze import Executable, setup
 
 APP_NAME = "Cable Conduit Fill Simulator"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 UPGRADE_CODE = "{AF5E0BF1-3F34-4C1D-9A89-8529F5CDFE69}"
 TARGET_DIR = r"[LocalAppDataFolder]\CableConduitFillSimulator"
 TARGET_EXE = "CableSimulation.exe"
